@@ -4,206 +4,211 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Mother AI Control Plane</title>
-    <script src="https://unpkg.com/htmx.org@1.9.11"></script>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-slate-900 text-slate-100 min-h-screen">
-    <div class="max-w-5xl mx-auto py-10 px-4">
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <main class="max-w-6xl mx-auto py-8 px-4">
       <header class="mb-8">
-        <h1 class="text-3xl font-bold">Mother AI Control Plane</h1>
-        <p class="text-sm text-slate-400">Secure monitoring and control for all agents.</p>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h1 class="text-3xl font-bold">🤖 Mother AI</h1>
+            <p class="text-sm text-slate-400 mt-1">AI orchestration, monitoring and safe agent control.</p>
+          </div>
+          <span id="connection" class="px-3 py-1 rounded-full text-xs bg-slate-800">Offline</span>
+        </div>
       </header>
-      <section id="login-section" class="bg-slate-800 rounded-xl p-6 shadow-md">
-        <h2 class="text-xl font-semibold mb-4">Dashboard Login</h2>
+
+      <section id="login-section" class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl max-w-xl">
+        <h2 class="text-xl font-semibold mb-4">Secure Login</h2>
         <form id="login-form" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium">Email</label>
-            <input id="login-email" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" type="email" placeholder="you@example.com" required />
-          </div>
-          <div>
-            <label class="block text-sm font-medium">Role</label>
-            <select id="login-role" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2">
-              <option value="viewer">Viewer</option>
-              <option value="operator">Operator</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium">API Key</label>
-            <input id="login-key" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2" type="password" placeholder="API key" required />
-          </div>
-          <button class="bg-indigo-500 hover:bg-indigo-400 transition-colors text-white px-4 py-2 rounded" type="submit">Issue Token</button>
+          <input id="login-email" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2" type="email" placeholder="you@example.com" required />
+          <select id="login-role" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2">
+            <option value="viewer">Viewer</option>
+            <option value="operator">Operator</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input id="login-key" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2" type="password" placeholder="API key" required />
+          <button class="w-full bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg font-medium" type="submit">Sign in</button>
         </form>
         <p id="login-error" class="text-sm text-rose-400 mt-4 hidden"></p>
       </section>
-      <section id="dashboard" class="hidden">
-        <div class="flex items-center justify-between mb-6">
-          <div>
-            <h2 class="text-2xl font-semibold">Agents</h2>
-            <p class="text-xs text-slate-400">Correlation ID: <span id="cid-display">-</span></p>
-          </div>
-          <div class="flex gap-3">
-            <button id="refresh-status" class="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded">Refresh</button>
-            <button id="logout" class="bg-rose-500 hover:bg-rose-400 px-3 py-2 rounded">Logout</button>
-          </div>
-        </div>
-        <div id="agent-cards" class="grid md:grid-cols-2 gap-4"></div>
-        <div class="mt-6">
-          <h3 class="text-lg font-semibold mb-2">Audit Trail</h3>
-          <pre id="audit-log" class="bg-slate-800 rounded p-4 h-48 overflow-y-auto text-xs"></pre>
-        </div>
-      </section>
-    </div>
-    <script>
-      const state = {
-        token: null,
-        role: "viewer",
-        ws: null,
-      };
 
-      function setCorrelationId(value) {
-        document.getElementById("cid-display").textContent = value;
+      <section id="dashboard" class="hidden">
+        <div class="flex items-center justify-between mb-5">
+          <div>
+            <h2 class="text-2xl font-semibold">System Overview</h2>
+            <p class="text-xs text-slate-500">Correlation ID: <span id="cid-display">-</span></p>
+          </div>
+          <div class="flex gap-2">
+            <button id="refresh-status" class="bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-lg">Refresh</button>
+            <button id="logout" class="bg-rose-700 hover:bg-rose-600 px-3 py-2 rounded-lg">Logout</button>
+          </div>
+        </div>
+
+        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-xs text-slate-400">Gateway</div><div id="metric-gateway" class="text-2xl font-bold mt-1">-</div></div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-xs text-slate-400">System</div><div id="metric-ready" class="text-2xl font-bold mt-1">-</div></div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-xs text-slate-400">Loaded Agents</div><div id="metric-agents" class="text-2xl font-bold mt-1">0</div></div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-xs text-slate-400">Running</div><div id="metric-running" class="text-2xl font-bold mt-1">0</div></div>
+        </div>
+
+        <div id="circuit-warning" class="hidden bg-rose-950 border border-rose-800 text-rose-200 rounded-xl p-4 mb-6">Control circuit is OPEN. Start/stop operations are blocked.</div>
+
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xl font-semibold">Agents</h3>
+            <span id="agent-summary" class="text-xs text-slate-400"></span>
+          </div>
+          <div id="agent-cards" class="grid md:grid-cols-2 gap-4"></div>
+        </section>
+
+        <section class="grid lg:grid-cols-2 gap-4 mt-6">
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold mb-2">System Health</h3>
+            <pre id="system-data" class="text-xs text-slate-300 overflow-auto"></pre>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold mb-2">Control & Audit</h3>
+            <pre id="audit-data" class="text-xs text-slate-300 overflow-auto"></pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const state = { token: null, role: "viewer", ws: null };
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
       }
 
-      function ensureWebSocket() {
-        if (!state.token) {
-          return;
-        }
-        if (state.ws) {
-          state.ws.close();
-        }
-        const url = `${window.location.origin.replace("http", "ws")}/ws/status`;
-        state.ws = new WebSocket(url, []);
-        state.ws.onopen = () => {
-          state.ws.send(JSON.stringify({ token: state.token }));
-        };
-        state.ws.onmessage = (evt) => {
-          const payload = JSON.parse(evt.data);
-          renderAgents(payload);
-        };
-        state.ws.onclose = () => {
-          setTimeout(ensureWebSocket, 2000);
-        };
+      function setCorrelationId(value) { document.getElementById("cid-display").textContent = value; }
+
+      async function api(path, options = {}) {
+        const headers = { ...(options.headers || {}) };
+        if (state.token) headers.Authorization = `Bearer ${state.token}`;
+        const response = await fetch(path, { ...options, headers });
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        return data;
       }
 
       function renderAgents(payload) {
-        const cards = payload.agents
-          .map((agent) => {
-            const status = agent.running ? "Running" : "Stopped";
-            const badge = agent.running ? "bg-emerald-500" : "bg-rose-500";
-            const disabled = state.role === "viewer" || payload.circuit_breaker.open;
-            const actions = `
-              <div class=\"flex gap-2\">
-                <button data-agent=\"${agent.key}\" data-action=\"start\" class=\"start-btn bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded disabled:opacity-40\" ${disabled ? "disabled" : ""}>Start</button>
-                <button data-agent=\"${agent.key}\" data-action=\"stop\" class=\"stop-btn bg-amber-500 hover:bg-amber-400 px-3 py-1 rounded disabled:opacity-40\" ${disabled ? "disabled" : ""}>Stop</button>
-              </div>`;
-            return `
-              <div class=\"bg-slate-800 rounded-xl p-4 shadow\">
-                <div class=\"flex items-center justify-between\">
-                  <div>
-                    <h4 class=\"font-semibold text-lg\">${agent.key}</h4>
-                    <p class=\"text-xs text-slate-400\">Last tick: ${agent.last_tick ?? "-"}</p>
-                  </div>
-                  <span class=\"${badge} text-xs font-semibold px-2 py-1 rounded-full\">${status}</span>
-                </div>
-                <p class=\"mt-3 text-sm text-slate-300\">${agent.last_error ?? "No errors"}</p>
-                ${actions}
-              </div>`;
-          })
-          .join("\n");
-        document.getElementById("agent-cards").innerHTML = cards;
-        document.getElementById("audit-log").textContent = JSON.stringify(
-          {
-            circuit_breaker: payload.circuit_breaker,
-            last_audit_ts: payload.last_audit_ts,
-          },
-          null,
-          2,
-        );
+        // /status exposes agents as an object; /agents exposes them as an array.
+        const agents = Array.isArray(payload.agents)
+          ? payload.agents
+          : Object.entries(payload.agents || {}).map(([key, value]) => ({ key, ...(value || {}) }));
+        const circuitOpen = Boolean(payload.circuit_breaker?.open);
+        document.getElementById("metric-agents").textContent = payload.agent_count ?? agents.length;
+        document.getElementById("metric-running").textContent = payload.running_count ?? agents.filter(a => a.running).length;
+        document.getElementById("agent-summary").textContent = `${payload.healthy_count ?? agents.filter(a => a.healthy !== false).length} healthy`;
+        document.getElementById("circuit-warning").classList.toggle("hidden", !circuitOpen);
+
+        document.getElementById("agent-cards").innerHTML = agents.map(agent => {
+          const key = escapeHtml(agent.key);
+          const running = Boolean(agent.running);
+          const healthy = agent.healthy !== false;
+          const stateText = healthy ? (running ? "RUNNING" : "STOPPED") : "DEGRADED";
+          const stateClass = healthy ? (running ? "text-emerald-400" : "text-slate-400") : "text-amber-400";
+          const disabled = state.role === "viewer" || circuitOpen;
+          return `<article class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="flex items-start justify-between gap-3">
+              <div><h4 class="text-lg font-semibold">${key}</h4><p class="text-xs text-slate-500">${escapeHtml(agent.class_name || "Agent")}</p></div>
+              <span class="text-xs font-bold ${stateClass}">${stateText}</span>
+            </div>
+            <p class="text-sm text-slate-300 mt-3 min-h-10">${escapeHtml(agent.description || "No description")}</p>
+            <div class="text-xs text-slate-500 mt-3">Mode: ${escapeHtml(agent.mode || agent.registry?.config?.mode || "standard")}</div>
+            ${agent.last_error || agent.status_error ? `<div class="text-xs text-rose-400 mt-2">${escapeHtml(agent.last_error || agent.status_error)}</div>` : ""}
+            <div class="flex gap-2 mt-4">
+              <button data-agent="${key}" data-action="start" class="control-btn bg-indigo-600 hover:bg-indigo-500 px-3 py-2 rounded-lg text-sm disabled:opacity-40" ${disabled || running ? "disabled" : ""}>Start</button>
+              <button data-agent="${key}" data-action="stop" class="control-btn bg-amber-700 hover:bg-amber-600 px-3 py-2 rounded-lg text-sm disabled:opacity-40" ${disabled || !running ? "disabled" : ""}>Stop</button>
+            </div>
+          </article>`;
+        }).join("");
+      }
+
+      function renderStatus(payload) {
+        document.getElementById("metric-gateway").textContent = "ONLINE";
+        document.getElementById("metric-ready").textContent = "READY";
+        renderAgents(payload);
+        document.getElementById("system-data").textContent = JSON.stringify({ loaded_agents: payload.loaded_agents, agent_count: payload.agent_count, running_count: payload.running_count, healthy_count: payload.healthy_count }, null, 2);
+        document.getElementById("audit-data").textContent = JSON.stringify({ circuit_breaker: payload.circuit_breaker, last_audit_ts: payload.last_audit_ts, timestamp: payload.timestamp }, null, 2);
+      }
+
+      async function refresh() {
+        try {
+          const cid = crypto.randomUUID();
+          setCorrelationId(cid);
+          const payload = await api("/status", { headers: { "X-Correlation-ID": cid } });
+          renderStatus(payload);
+          document.getElementById("connection").textContent = "Online";
+          document.getElementById("connection").className = "px-3 py-1 rounded-full text-xs bg-emerald-900 text-emerald-300";
+        } catch (error) {
+          document.getElementById("connection").textContent = "Error";
+          document.getElementById("connection").className = "px-3 py-1 rounded-full text-xs bg-rose-900 text-rose-300";
+        }
       }
 
       async function callControl(agentKey, action) {
-        const endpoint = action === "start" ? "/start" : "/stop";
-        const cid = crypto.randomUUID();
-        setCorrelationId(cid);
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${state.token}`,
-            "X-Correlation-ID": cid,
-          },
-          body: JSON.stringify({ agent_key: agentKey }),
-        });
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ detail: "error" }));
-          alert(`Action failed: ${error.detail || "Unknown error"}`);
-        }
+        try {
+          const cid = crypto.randomUUID();
+          setCorrelationId(cid);
+          await api(action === "start" ? "/start" : "/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Correlation-ID": cid },
+            body: JSON.stringify({ agent_key: agentKey }),
+          });
+          await refresh();
+        } catch (error) { alert(`Action failed: ${error.message}`); }
       }
 
-      document.addEventListener("click", (event) => {
-        const target = event.target;
-        if (target.classList.contains("start-btn") || target.classList.contains("stop-btn")) {
-          event.preventDefault();
-          callControl(target.dataset.agent, target.dataset.action);
-        }
+      function connectWebSocket() {
+        if (!state.token) return;
+        if (state.ws) state.ws.close();
+        const url = `${location.origin.replace(/^http/, "ws")}/ws/status`;
+        state.ws = new WebSocket(url);
+        state.ws.onopen = () => state.ws.send(JSON.stringify({ token: state.token }));
+        state.ws.onmessage = event => { try { renderStatus(JSON.parse(event.data)); } catch (_) {} };
+        state.ws.onclose = () => { if (state.token) setTimeout(connectWebSocket, 3000); };
+      }
+
+      document.addEventListener("click", event => {
+        const target = event.target.closest(".control-btn");
+        if (target && !target.disabled) callControl(target.dataset.agent, target.dataset.action);
       });
 
+      document.getElementById("refresh-status").addEventListener("click", refresh);
       document.getElementById("logout").addEventListener("click", () => {
         state.token = null;
         localStorage.removeItem("mother_token");
+        if (state.ws) state.ws.close();
         document.getElementById("dashboard").classList.add("hidden");
         document.getElementById("login-section").classList.remove("hidden");
-        if (state.ws) {
-          state.ws.close();
-        }
       });
 
-      document.getElementById("refresh-status").addEventListener("click", async () => {
-        if (!state.token) return;
-        const cid = crypto.randomUUID();
-        setCorrelationId(cid);
-        const res = await fetch("/status", {
-          headers: {
-            Authorization: `Bearer ${state.token}`,
-            "X-Correlation-ID": cid,
-          },
-        });
-        if (res.ok) {
-          const payload = await res.json();
-          renderAgents(payload);
-        }
-      });
-
-      document.getElementById("login-form").addEventListener("submit", async (event) => {
+      document.getElementById("login-form").addEventListener("submit", async event => {
         event.preventDefault();
-        const email = document.getElementById("login-email").value;
-        const role = document.getElementById("login-role").value;
-        const apiKey = document.getElementById("login-key").value;
-        const res = await fetch("/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
-          body: JSON.stringify({ email, role }),
-        });
-        if (!res.ok) {
-          document.getElementById("login-error").textContent = "Login failed";
-          document.getElementById("login-error").classList.remove("hidden");
-          return;
+        const errorBox = document.getElementById("login-error");
+        errorBox.classList.add("hidden");
+        try {
+          const response = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": document.getElementById("login-key").value },
+            body: JSON.stringify({ email: document.getElementById("login-email").value, role: document.getElementById("login-role").value }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "Login failed");
+          state.token = data.token;
+          state.role = document.getElementById("login-role").value;
+          localStorage.setItem("mother_token", state.token);
+          document.getElementById("login-section").classList.add("hidden");
+          document.getElementById("dashboard").classList.remove("hidden");
+          await refresh();
+          connectWebSocket();
+        } catch (error) {
+          errorBox.textContent = error.message;
+          errorBox.classList.remove("hidden");
         }
-        const data = await res.json();
-        state.token = data.token;
-        state.role = role;
-        localStorage.setItem("mother_token", state.token);
-        document.getElementById("login-section").classList.add("hidden");
-        document.getElementById("dashboard").classList.remove("hidden");
-        ensureWebSocket();
-      });
-
-      document.addEventListener("htmx:configRequest", (event) => {
-        if (state.token) {
-          event.detail.headers.Authorization = `Bearer ${state.token}`;
-        }
-        event.detail.headers["X-Correlation-ID"] = crypto.randomUUID();
       });
 
       const existing = localStorage.getItem("mother_token");
@@ -211,7 +216,7 @@
         state.token = existing;
         document.getElementById("login-section").classList.add("hidden");
         document.getElementById("dashboard").classList.remove("hidden");
-        ensureWebSocket();
+        refresh().then(connectWebSocket);
       }
     </script>
   </body>
