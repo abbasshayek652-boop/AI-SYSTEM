@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pathlib
 from collections import deque
 from typing import Any
@@ -7,13 +8,24 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import ValidationError
 
-from ai.registry import Registry, hydrate_agents
 from ai.base_agent import Agent
+from ai.registry import Registry, hydrate_agents
 from gateway.auth import AuthContext, get_admin, get_viewer
 from routers.core import _safe_agent_status
 
 
 router = APIRouter()
+
+
+SECRET_CONFIG_KEYS = {
+    "api_key",
+    "api_secret",
+    "secret",
+    "token",
+    "password",
+    "fernet_key",
+    "webhook_url",
+}
 
 
 def _log_path(agent_key: str) -> pathlib.Path:
@@ -34,25 +46,24 @@ def _read_logs(agent_key: str, limit: int = 2000) -> str:
 def _registry_entry(request: Request, key: str) -> dict[str, Any] | None:
     registry = getattr(request.app.state, "registry", None)
     for entry in getattr(registry, "agents", []) if registry else []:
-        if getattr(entry, "key", None) == key:
-            config = dict(getattr(entry, "config", {}) or {})
-            # Never expose credentials or secret material through the dashboard API.
-            secret_keys = {"api_key", "api_secret", "secret", "token", "password", "fernet_key", "webhook_url"}
-            safe_config = {k: v for k, v in config.items() if k.lower() not in secret_keys}
-            return {
-                "enabled": bool(getattr(entry, "enabled", True)),
-                "module": getattr(entry, "module", None),
-                "class_name": getattr(entry, "class_name", None),
-                "config": safe_config,
-            }
+        if getattr(entry, "key", None) != key:
+            continue
+        config = dict(getattr(entry, "config", {}) or {})
+        safe_config = {
+            k: v for k, v in config.items() if k.lower() not in SECRET_CONFIG_KEYS
+        }
+        return {
+            "enabled": bool(getattr(entry, "enabled", True)),
+            "module": getattr(entry, "module", None),
+            "class_name": getattr(entry, "class_name", None),
+            "config": safe_config,
+        }
     return None
 
 
-@router.get("/agents")
-async def list_agents(request: Request, _: AuthContext = Depends(get_viewer)) -> dict[str, Any]:
-    """Return a frontend-friendly, stable representation of every loaded agent."""
+async def _agent_items(request: Request) -> list[dict[str, Any]]:
     agents: dict[str, Agent] = getattr(request.app.state, "agents", {}) or {}
-    results = await __import__("asyncio").gather(
+    results = await asyncio.gather(
         *(_safe_agent_status(key, agent) for key, agent in agents.items())
     )
     items: list[dict[str, Any]] = []
@@ -60,6 +71,13 @@ async def list_agents(request: Request, _: AuthContext = Depends(get_viewer)) ->
         item = dict(runtime)
         item["registry"] = _registry_entry(request, key)
         items.append(item)
+    return items
+
+
+@router.get("/agents")
+async def list_agents(request: Request, _: AuthContext = Depends(get_viewer)) -> dict[str, Any]:
+    """Stable, frontend-friendly representation of every loaded agent."""
+    items = await _agent_items(request)
     return {
         "count": len(items),
         "running_count": sum(bool(item.get("running")) for item in items),
@@ -84,8 +102,7 @@ async def agent_logs(agent_key: str, request: Request, _: AuthContext = Depends(
     agents = getattr(request.app.state, "agents", None) or {}
     if agent_key not in agents:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
-    content = _read_logs(agent_key)
-    return Response(content=content, media_type="text/plain")
+    return Response(content=_read_logs(agent_key), media_type="text/plain")
 
 
 @router.post("/registry/validate")
