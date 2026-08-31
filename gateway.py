@@ -40,13 +40,11 @@ from telegram.notify import notify_alert
 setup_logging(settings.log_level)
 LOGGER = logging.getLogger("gateway")
 
-app = FastAPI(title="Mother AI Gateway", version="2.0.0")
+app = FastAPI(title="Mother AI Gateway", version="2.1.0")
 app.state.ready = False
 
-# SlowAPI route decorators use app.state.limiter directly.  Do not install
-# SlowAPIMiddleware here: its BaseHTTPMiddleware integration is unnecessary
-# for this application (we use explicit @limiter.limit(...) decorators), and
-# it creates a compatibility failure with some FastAPI/Starlette combinations.
+# SlowAPI route decorators use app.state.limiter directly. Do not install
+# SlowAPIMiddleware here; explicit decorators are sufficient for this API.
 app.state.limiter = limiter
 
 app.add_middleware(CorrelationIdMiddleware)
@@ -120,10 +118,21 @@ async def on_startup() -> None:
     dashboard_ws.configure(lambda: status_payload(app))
     for key, agent in agents.items():
         set_agent_state(key, agent.running)
+
     scheduler = build_scheduler(lambda: status_payload(app), notify_alert)
     scheduler.start()
     app.state.scheduler = scheduler
-    start_linkedin_scheduler(app)
+
+    linkedin_enabled = any(
+        getattr(entry, "key", None) == "linkedin" and bool(getattr(entry, "enabled", False))
+        for entry in getattr(registry, "agents", [])
+    )
+    if linkedin_enabled:
+        start_linkedin_scheduler(app)
+    else:
+        app.state.linkedin_scheduler = None
+        LOGGER.info("LinkedIn scheduler disabled by registry")
+
     app.state.ready = True
     LOGGER.info("Gateway ready with %s agents", len(agents))
 
@@ -131,10 +140,17 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     LOGGER.info("Gateway shutdown requested")
+    app.state.ready = False
+
     supervisor = getattr(app.state, "supervisor", None)
     if supervisor is not None:
         await supervisor.stop_all()
-    scheduler = getattr(app.state, "linkedin_scheduler", None)
+
+    linkedin_scheduler = getattr(app.state, "linkedin_scheduler", None)
+    if linkedin_scheduler is not None:
+        await linkedin_scheduler.stop()
+
+    scheduler = getattr(app.state, "scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
 
