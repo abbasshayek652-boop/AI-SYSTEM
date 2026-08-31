@@ -21,6 +21,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Copy Streamlit Cloud secrets into the OS environment so the FastAPI
+# backend subprocess (which only reads os.environ) can see them too.
+try:
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(_key, str(_value))
+except Exception:
+    pass  # no secrets configured (e.g. running purely locally with a .env file)
+
 # ============================================================================
 # START BACKEND ENGINE FOR STREAMLIT CLOUD
 # ============================================================================
