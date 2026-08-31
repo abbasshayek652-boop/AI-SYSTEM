@@ -9,7 +9,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 
 from agents.linkedin_agent.router import router as linkedin_router
 from agents.linkedin_agent.scheduler import start_scheduler as start_linkedin_scheduler
@@ -20,7 +19,7 @@ from ai.utils.logging import setup_logging
 from dashboard import ws as dashboard_ws
 from db.session import init_db
 from gateway.auth import Role, issue_jwt
-from gateway.guards import limiter  # Re-using your exact project limiter
+from gateway.guards import limiter
 from gateway.metrics import metrics_app, record_gateway_error, set_agent_state
 from gateway.middleware import CorrelationIdMiddleware
 from routers import (
@@ -43,10 +42,14 @@ LOGGER = logging.getLogger("gateway")
 
 app = FastAPI(title="Mother AI Gateway", version="2.0.0")
 app.state.ready = False
+
+# SlowAPI route decorators use app.state.limiter directly.  Do not install
+# SlowAPIMiddleware here: its BaseHTTPMiddleware integration is unnecessary
+# for this application (we use explicit @limiter.limit(...) decorators), and
+# it creates a compatibility failure with some FastAPI/Starlette combinations.
 app.state.limiter = limiter
 
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(SlowAPIMiddleware)
 
 if settings.dashboard_origin:
     app.add_middleware(
@@ -136,7 +139,6 @@ async def on_shutdown() -> None:
         await scheduler.stop()
 
 
-# FIXED: Cleaned up the type signature override to satisfy FastAPI's ASGI standards
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     record_gateway_error(request.url.path)
@@ -154,9 +156,9 @@ async def login(request: Request, payload: LoginRequest, x_api_key: str | None =
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
-    return FileResponse("dashboard/index.html")
+    return FileResponse(BASE_DIR / "dashboard" / "index.html")
 
-# ADDED: Dedicated light health checks so Google Cloud can see the application is healthy
+
 @app.get("/healthz", include_in_schema=False)
-async def health_check():
+async def health_check() -> dict[str, str]:
     return {"status": "ok"}
