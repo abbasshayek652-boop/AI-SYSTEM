@@ -55,7 +55,7 @@ async def start_agent(cmd: Command, request: Request, ctx: AuthContext = Depends
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
     if not idempotency_cache.allow(f"start:{cmd.agent_key}"):
         _audit(request, ctx, "start", cmd.agent_key, True, {"duplicate": True})
-        return {"ok": True, "duplicate": True}
+        return {"ok": True, "duplicate": True, "agent_key": cmd.agent_key}
     ok = False
     try:
         await supervisor.start(cmd.agent_key)
@@ -63,7 +63,7 @@ async def start_agent(cmd: Command, request: Request, ctx: AuthContext = Depends
         ok = True
         record_agent_action(cmd.agent_key, "start", ctx.role)
         circuit_breaker.record_success()
-        return {"ok": True}
+        return {"ok": True, "agent_key": cmd.agent_key, "running": True}
     except Exception as exc:  # noqa: BLE001
         circuit_breaker.record_error(str(exc))
         record_gateway_error("/start")
@@ -85,7 +85,7 @@ async def stop_agent(cmd: Command, request: Request, ctx: AuthContext = Depends(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
     if not idempotency_cache.allow(f"stop:{cmd.agent_key}"):
         _audit(request, ctx, "stop", cmd.agent_key, True, {"duplicate": True})
-        return {"ok": True, "duplicate": True}
+        return {"ok": True, "duplicate": True, "agent_key": cmd.agent_key}
     ok = False
     try:
         await supervisor.stop(cmd.agent_key)
@@ -93,7 +93,7 @@ async def stop_agent(cmd: Command, request: Request, ctx: AuthContext = Depends(
         ok = True
         record_agent_action(cmd.agent_key, "stop", ctx.role)
         circuit_breaker.record_success()
-        return {"ok": True}
+        return {"ok": True, "agent_key": cmd.agent_key, "running": False}
     except Exception as exc:  # noqa: BLE001
         circuit_breaker.record_error(str(exc))
         record_gateway_error("/stop")
