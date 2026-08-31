@@ -43,9 +43,10 @@ LOGGER = logging.getLogger("gateway")
 
 app = FastAPI(title="Mother AI Gateway", version="2.0.0")
 app.state.ready = False
+app.state.limiter = limiter
 
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(SlowAPIMiddleware, limiter=limiter)
+app.add_middleware(SlowAPIMiddleware)
 
 if settings.dashboard_origin:
     app.add_middleware(
