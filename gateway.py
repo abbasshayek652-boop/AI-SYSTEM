@@ -24,6 +24,7 @@ from gateway.metrics import metrics_app, record_gateway_error, set_agent_state
 from gateway.middleware import CorrelationIdMiddleware
 from routers import (
     agents_router,
+    catalog_router,
     console_router,
     control_router,
     core_router,
@@ -40,8 +41,10 @@ from telegram.notify import notify_alert
 setup_logging(settings.log_level)
 LOGGER = logging.getLogger("gateway")
 
-app = FastAPI(title="Mother AI Gateway", version="2.1.0")
+app = FastAPI(title="Mother AI Gateway", version="2.2.0")
 app.state.ready = False
+app.state.api_version = "2.2"
+app.state.catalog_version = "1.0"
 
 # SlowAPI route decorators use app.state.limiter directly. Do not install
 # SlowAPIMiddleware here; explicit decorators are sufficient for this API.
@@ -67,6 +70,7 @@ app.include_router(linkedin_router)
 app.include_router(core_router)
 app.include_router(control_router)
 app.include_router(agents_router)
+app.include_router(catalog_router)
 app.include_router(learning_router)
 app.include_router(wallet_router)
 app.include_router(planner_router)
@@ -134,7 +138,7 @@ async def on_startup() -> None:
         LOGGER.info("LinkedIn scheduler disabled by registry")
 
     app.state.ready = True
-    LOGGER.info("Gateway ready with %s agents", len(agents))
+    LOGGER.info("Gateway ready with %s runtime agents; catalog contains 50 agents", len(agents))
 
 
 @app.on_event("shutdown")
@@ -177,4 +181,4 @@ async def index() -> FileResponse:
 
 @app.get("/healthz", include_in_schema=False)
 async def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "api_version": app.state.api_version}
