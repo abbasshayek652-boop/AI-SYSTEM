@@ -13,16 +13,16 @@ from db.session import engine
 from gateway.auth import AuthContext, get_viewer
 from gateway.guards import circuit_breaker
 
-
 router = APIRouter()
 
 
 async def _safe_agent_status(key: str, agent: Agent) -> tuple[str, dict[str, Any]]:
-    """Return an isolated status result so one unhealthy agent cannot break /status."""
+    """Return isolated status without allowing one agent to break the control plane."""
     try:
         payload = await agent.status()
         if not isinstance(payload, dict):
             payload = {"value": payload}
+        healthy = bool(payload.get("healthy", True))
         return key, {
             **payload,
             "key": key,
@@ -30,8 +30,8 @@ async def _safe_agent_status(key: str, agent: Agent) -> tuple[str, dict[str, Any
             "description": getattr(agent, "description", ""),
             "class_name": agent.__class__.__name__,
             "running": bool(getattr(agent, "running", False)),
-            "healthy": True,
-            "status_error": None,
+            "healthy": healthy,
+            "status_error": payload.get("status_error"),
         }
     except Exception as exc:  # noqa: BLE001
         return key, {
@@ -75,11 +75,12 @@ def _db_ready() -> bool:
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, object]:
+async def healthz(request: Request) -> dict[str, object]:
     return {
         "ok": True,
         "status": "ok",
         "service": "mother_ai",
+        "api_version": getattr(request.app.state, "api_version", "unknown"),
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 
@@ -90,13 +91,14 @@ async def readyz(request: Request) -> dict[str, object]:
     registry_ok = getattr(request.app.state, "registry", None) is not None
     agents_ok = isinstance(getattr(request.app.state, "agents", None), dict)
     app_ready = bool(getattr(request.app.state, "ready", False))
+    agent_count = len(getattr(request.app.state, "agents", {}) or {})
     ready = all([db_ok, registry_ok, agents_ok, app_ready])
     return {
         "ready": ready,
         "db": db_ok,
         "registry": registry_ok,
         "agents": agents_ok,
-        "agent_count": len(getattr(request.app.state, "agents", {}) or {}),
+        "agent_count": agent_count,
     }
 
 

@@ -6,26 +6,22 @@ from collections import deque
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ai.base_agent import Agent
 from ai.registry import Registry, hydrate_agents
-from gateway.auth import AuthContext, get_admin, get_viewer
+from gateway.auth import AuthContext, get_admin, get_operator, get_viewer
 from routers.core import _safe_agent_status
-
 
 router = APIRouter()
 
 
-SECRET_CONFIG_KEYS = {
-    "api_key",
-    "api_secret",
-    "secret",
-    "token",
-    "password",
-    "fernet_key",
-    "webhook_url",
-}
+SECRET_CONFIG_KEYS = {"api_key", "api_secret", "secret", "token", "password", "fernet_key", "webhook_url"}
+
+
+class AgentExecuteRequest(BaseModel):
+    action: str = Field(default="inspect", min_length=1, max_length=100)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 def _log_path(agent_key: str) -> pathlib.Path:
@@ -49,23 +45,14 @@ def _registry_entry(request: Request, key: str) -> dict[str, Any] | None:
         if getattr(entry, "key", None) != key:
             continue
         config = dict(getattr(entry, "config", {}) or {})
-        safe_config = {
-            k: v for k, v in config.items() if k.lower() not in SECRET_CONFIG_KEYS
-        }
-        return {
-            "enabled": bool(getattr(entry, "enabled", True)),
-            "module": getattr(entry, "module", None),
-            "class_name": getattr(entry, "class_name", None),
-            "config": safe_config,
-        }
+        safe_config = {k: v for k, v in config.items() if k.lower() not in SECRET_CONFIG_KEYS}
+        return {"enabled": bool(getattr(entry, "enabled", True)), "module": getattr(entry, "module", None), "class_name": getattr(entry, "class_name", None), "config": safe_config}
     return None
 
 
 async def _agent_items(request: Request) -> list[dict[str, Any]]:
     agents: dict[str, Agent] = getattr(request.app.state, "agents", {}) or {}
-    results = await asyncio.gather(
-        *(_safe_agent_status(key, agent) for key, agent in agents.items())
-    )
+    results = await asyncio.gather(*(_safe_agent_status(key, agent) for key, agent in agents.items()))
     items: list[dict[str, Any]] = []
     for key, runtime in results:
         item = dict(runtime)
@@ -76,14 +63,8 @@ async def _agent_items(request: Request) -> list[dict[str, Any]]:
 
 @router.get("/agents")
 async def list_agents(request: Request, _: AuthContext = Depends(get_viewer)) -> dict[str, Any]:
-    """Stable, frontend-friendly representation of every loaded agent."""
     items = await _agent_items(request)
-    return {
-        "count": len(items),
-        "running_count": sum(bool(item.get("running")) for item in items),
-        "healthy_count": sum(bool(item.get("healthy")) for item in items),
-        "agents": items,
-    }
+    return {"count": len(items), "running_count": sum(bool(item.get("running")) for item in items), "healthy_count": sum(bool(item.get("healthy")) for item in items), "agents": items}
 
 
 @router.get("/agents/{agent_key}")
@@ -95,6 +76,30 @@ async def get_agent(agent_key: str, request: Request, _: AuthContext = Depends(g
     _, payload = await _safe_agent_status(agent_key, agent)
     payload["registry"] = _registry_entry(request, agent_key)
     return payload
+
+
+@router.post("/agents/{agent_key}/execute")
+async def execute_agent(agent_key: str, request: Request, payload: AgentExecuteRequest, _: AuthContext = Depends(get_operator)) -> dict[str, Any]:
+    """Run a local agent capability through its safe execute interface."""
+    agents: dict[str, Agent] = getattr(request.app.state, "agents", {}) or {}
+    agent = agents.get(agent_key)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
+    execute = getattr(agent, "execute", None)
+    if not callable(execute):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent does not expose an execute interface")
+    try:
+        result = await execute(payload.action, payload.payload)
+    except TypeError:
+        try:
+            result = await execute(**payload.payload)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Agent execution failed: {exc}") from exc
+    return {"ok": True, "agent": agent_key, "action": payload.action, "result": result}
 
 
 @router.get("/logs/{agent_key}")
