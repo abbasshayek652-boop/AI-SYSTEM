@@ -1,5 +1,30 @@
 {
+  "version": "1.0",
   "agents": [
+    {
+      "key": "mother",
+      "module": "agents.mother_agent",
+      "class_name": "MotherAgent",
+      "enabled": true,
+      "config": {
+        "max_history": 100,
+        "require_approval_for": ["live_trading", "deployment", "code_change"]
+      }
+    },
+    {
+      "key": "scheduler",
+      "module": "agents.executive_agents",
+      "class_name": "SchedulerAgent",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "key": "workflow",
+      "module": "agents.executive_agents",
+      "class_name": "WorkflowAgent",
+      "enabled": true,
+      "config": {}
+    },
     {
       "key": "learning",
       "module": "ai.learning_engine",
@@ -11,20 +36,9 @@
         "db_url": "sqlite:///mother_learning.db",
         "redis_url": "redis://localhost:6379/0",
         "default_timeframe": "1m",
-        "symbols": [
-          "BTC/USDT",
-          "ETH/USDT",
-          "PAXG/USDT"
-        ],
-        "policy_max_caps": {
-          "max_notional_per_trade": 15.0,
-          "max_total_exposure_usdt": 150.0
-        },
-        "promotion_thresholds": {
-          "sharpe_min": 0.8,
-          "max_dd_pct": 0.1,
-          "qc_rate_max": 0.02
-        }
+        "symbols": ["BTC/USDT", "ETH/USDT", "PAXG/USDT"],
+        "policy_max_caps": {"max_notional_per_trade": 15.0, "max_total_exposure_usdt": 150.0},
+        "promotion_thresholds": {"sharpe_min": 0.8, "max_dd_pct": 0.1, "qc_rate_max": 0.02}
       }
     },
     {
@@ -35,11 +49,7 @@
       "config": {
         "paper": true,
         "strategy": "momentum_ema",
-        "allowed_pairs": [
-          "BTC/USDT",
-          "ETH/USDT",
-          "BNB/USDT"
-        ],
+        "allowed_pairs": ["BTC/USDT", "ETH/USDT", "BNB/USDT"],
         "timeframe": "1m",
         "tick_seconds": 15,
         "max_notional_per_trade": 15.0,
@@ -48,20 +58,12 @@
         "fee_bps": 10,
         "slippage_bps": 5,
         "safety_cash_pct": 0.95,
-        "session_windows": [
-          [
-            "00:00",
-            "23:59"
-          ]
-        ],
+        "session_windows": [["00:00", "23:59"]],
         "trailing_stop_pct": 0.04,
         "twap_seconds": 20,
         "resume": true,
         "mode": "shadow",
-        "router_exchanges": [
-          "binance",
-          "okx"
-        ],
+        "router_exchanges": ["binance", "okx"],
         "canary_live_fraction": 0.1,
         "confirm_live": null,
         "bypass_canary": false,
@@ -80,14 +82,8 @@
         "paper": true,
         "mode": "shadow",
         "strategy": "momentum_ema",
-        "allowed_pairs": [
-          "PAXG/USDT"
-        ],
-        "router_exchanges": [
-          "binance",
-          "okx",
-          "bitget"
-        ],
+        "allowed_pairs": ["PAXG/USDT"],
+        "router_exchanges": ["binance", "okx", "bitget"],
         "timeframe": "1m",
         "tick_seconds": 20,
         "max_notional_per_trade": 15.0,
@@ -96,12 +92,7 @@
         "fee_bps": 10,
         "slippage_bps": 5,
         "safety_cash_pct": 0.95,
-        "session_windows": [
-          [
-            "00:00",
-            "23:59"
-          ]
-        ],
+        "session_windows": [["00:00", "23:59"]],
         "trailing_stop_pct": 0.04,
         "twap_seconds": 20,
         "resume": true,
@@ -120,29 +111,14 @@
       "module": "agent.content_bot",
       "class_name": "ContentAgent",
       "enabled": true,
-      "config": {
-        "tick_seconds": 15,
-        "default_topic": "Mother AI updates"
-      }
+      "config": {"tick_seconds": 15, "default_topic": "Mother AI updates"}
     },
     {
       "key": "linkedin",
       "module": "agents.linkedin_agent.service",
       "class_name": "LinkedInService",
       "enabled": false,
-      "config": {
-        "capabilities": [
-          "post_text",
-          "post_document",
-          "schedule"
-        ],
-        "routes": [
-          "/agents/linkedin/login",
-          "/agents/linkedin/post/text",
-          "/agents/linkedin/post/document",
-          "/agents/linkedin/schedule"
-        ]
-      }
+      "config": {"capabilities": ["post_text", "post_document", "schedule"]}
     }
   ]
 }
