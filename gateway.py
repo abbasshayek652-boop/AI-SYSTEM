@@ -28,6 +28,7 @@ from routers import (
     console_router,
     control_router,
     core_router,
+    executive_router,
     learning_router,
     planner_router,
     wallet_router,
@@ -45,9 +46,6 @@ app = FastAPI(title="Mother AI Gateway", version="2.2.0")
 app.state.ready = False
 app.state.api_version = "2.2"
 app.state.catalog_version = "1.0"
-
-# SlowAPI route decorators use app.state.limiter directly. Do not install
-# SlowAPIMiddleware here; explicit decorators are sufficient for this API.
 app.state.limiter = limiter
 
 app.add_middleware(CorrelationIdMiddleware)
@@ -62,7 +60,6 @@ if settings.dashboard_origin:
     )
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
-
 app.mount("/dashboard", StaticFiles(directory=BASE_DIR / "dashboard", html=True), name="dashboard")
 app.mount("/metrics", metrics_app())
 app.include_router(dashboard_ws.router)
@@ -71,6 +68,7 @@ app.include_router(core_router)
 app.include_router(control_router)
 app.include_router(agents_router)
 app.include_router(catalog_router)
+app.include_router(executive_router)
 app.include_router(learning_router)
 app.include_router(wallet_router)
 app.include_router(planner_router)
@@ -145,15 +143,12 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     LOGGER.info("Gateway shutdown requested")
     app.state.ready = False
-
     supervisor = getattr(app.state, "supervisor", None)
     if supervisor is not None:
         await supervisor.stop_all()
-
     linkedin_scheduler = getattr(app.state, "linkedin_scheduler", None)
     if linkedin_scheduler is not None:
         await linkedin_scheduler.stop()
-
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler is not None:
         await scheduler.stop()
