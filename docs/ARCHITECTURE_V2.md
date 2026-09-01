@@ -1,39 +1,66 @@
-# Mother AI Architecture v2
+# Mother AI — Streamlit Runtime Architecture
 
-## Control plane
+## Deployment target
 
-Streamlit or a future React console talks to one FastAPI Gateway. The gateway owns authentication, authorization, agent lifecycle, health/readiness, catalog, executive decisions, audit hooks, and API contracts.
+Version 2.x is intentionally designed to run as a single Streamlit application with a local FastAPI control plane inside the same Streamlit process/container. No cloud infrastructure is required for this version.
 
-## Agent plane
+```text
+Browser
+  |
+  v
+Streamlit UI
+  |
+  +--> FastAPI Gateway : local process
+          |
+          +--> Supervisor
+          +--> Scheduler
+          +--> Mother / Executive
+          +--> 50 runtime agents
+          +--> SQLite / local persistence
+          +--> local event bus
+```
 
-The Supervisor owns lifecycle and periodic ticks. Agents are isolated so a status/tick failure in one agent does not take down the control plane.
+## Agent model
 
-## Executive plane
+The 50-agent catalog is the product contract. Every catalog entry is hydrated into a real `Agent` runtime instance. Existing specialized agents keep their existing implementations; other capabilities use the safe `CatalogRuntimeAgent` until a domain-specific implementation is added.
 
-Mother Agent creates prioritized decisions. Scheduler Agent coordinates timing. Workflow Agent dispatches approved workflow definitions. These agents do not bypass governance.
+This means the dashboard can start, stop, inspect and execute every agent without pretending that an external integration exists.
 
-## Event-driven evolution
+## Safety boundary
 
-The next infrastructure step is to introduce an event bus abstraction with an in-process implementation for development and Google Pub/Sub for production. Agent messages should be structured events rather than direct imports between business agents.
+- Crypto and Gold remain paper/shadow by default.
+- LinkedIn publishing is disabled until explicit OAuth configuration is supplied.
+- Deployment, code changes and live trading require Mother approval.
+- Learning produces recommendations; it does not silently modify source code.
+- Generic catalog agents have `external_side_effects=false`.
 
-## Data plane
+## Control-plane API
 
-Development can continue with SQLite. Production should move durable state to PostgreSQL/Cloud SQL. Object artifacts belong in Cloud Storage. Secrets belong in Secret Manager. Redis is optional for transient coordination/caching.
+- `GET /healthz`
+- `GET /readyz`
+- `GET /status`
+- `GET /agents`
+- `GET /agents/{agent_key}`
+- `POST /agents/{agent_key}/execute`
+- `GET /catalog`
+- `GET /catalog/{agent_key}`
+- `POST /start`
+- `POST /stop`
+- `GET /executive/status`
+- `POST /executive/decide`
+- `POST /executive/approve`
+- `POST /executive/dispatch/{decision_id}`
 
-## Deployment
+## Runtime lifecycle
 
-- Cloud Run: gateway, console/API, stateless services.
-- GKE: only agents that genuinely need persistent processes or specialized runtime resources.
-- Artifact Registry: versioned images.
-- Cloud Build/GitHub Actions: CI/CD.
-- Cloud Monitoring/Logging: metrics, logs, alerts.
+```text
+Catalog
+  -> Registry
+  -> Hydration
+  -> Supervisor
+  -> Start / Stop
+  -> Tick loop
+  -> Status / Execute
+```
 
-## Promotion pipeline
-
-`development -> tests -> staging -> approval -> production`
-
-No learning component should directly write production source code. Code and configuration changes pass through proposal, testing, approval, and staged deployment.
-
-## Versioning
-
-The API advertises `2.2` and the agent catalog advertises `1.0`. Clients should use these values for compatibility checks instead of assuming that a successful `/healthz` means every control-plane endpoint exists.
+The Streamlit launcher validates the gateway API version before accepting a backend as healthy. This prevents an old gateway process from being mistaken for a current one.
