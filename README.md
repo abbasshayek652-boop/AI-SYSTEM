@@ -1,131 +1,100 @@
-# Mother AI (Windows 10 Quickstart)
+# Mother AI — Autonomous AI Control Plane
 
-This repository runs a FastAPI control plane (`gateway.py`) that loads agents from `registry.json`.
+Mother AI is a layered, governed agent platform. The FastAPI gateway is the single control plane; Streamlit is the current operator console. The system separates executive coordination from business agents and keeps high-impact actions behind explicit approval.
 
-## 1) Single intended entrypoint
+## Current architecture
 
-Use:
-
-```bash
-python -m mother_ai.run
+```text
+Dashboard (Streamlit / future React)
+             |
+             v
+      FastAPI Gateway 2.2
+       /healthz /readyz
+       /status /agents /catalog
+       /executive/* /start /stop
+             |
+      +------+------+
+      |             |
+ Supervisor     Event Bus
+      |
+ +----+----+----------------+
+ |    |    |                |
+Mother Crypto Gold       Content
+ |                         |
+Scheduler / Workflow      Learning
 ```
 
-That command starts Uvicorn on `0.0.0.0:${PORT:-8000}`.
+## Agent catalog v1.0
 
----
+The product catalog contains **50 agents** across Executive, Finance, Trading, Learning, Content, Business, Intelligence, Infrastructure, Security, Development, and Communication.
 
-## 2) What was failing and what was fixed
+`GET /catalog` exposes the complete catalog. `GET /agents` exposes only hydrated runtime agents. This distinction prevents a planned capability from being represented as a working integration.
 
-### Root cause A: unclear startup command
-- **Problem**: multiple run styles (`uvicorn gateway:app`, `make run`, Replit docs) caused confusion.
-- **Fix**: standardized on one command: `python -m mother_ai.run`.
+Current runtime implementations include Mother, Scheduler, Workflow, Learning, Crypto, Gold, and Content. LinkedIn remains an existing integration that is disabled until credentials/configuration are supplied. The remaining catalog entries are safe scaffolds until their real adapters and business logic are implemented.
 
-### Root cause B: incomplete root dependencies
-- **Problem**: root `requirements.txt` was too small for the actual imports used by gateway/agents.
-- **Fix**: aligned root `requirements.txt` with runtime dependencies used by this project.
+## Executive governance
 
-### Root cause C: hard to verify installation before running server
-- **Problem**: no easy preflight check from CLI.
-- **Fix**: added `--smoke-test` to entrypoint:
-  ```bash
-  python -m mother_ai.run --smoke-test
-  ```
-  It validates imports and registry hydration, then prints JSON.
+Mother Agent creates decisions; it does not directly execute business tasks. High-impact actions require approval. Available endpoints include:
 
----
+- `GET /executive/status`
+- `POST /executive/decide`
+- `POST /executive/approve`
+- `POST /executive/dispatch/{decision_id}`
 
-## 3) Install (fresh Windows 10 machine)
+Code changes follow proposal -> tests -> human approval -> staged deployment. The Learning Engine must never directly rewrite production source code.
 
-Open **PowerShell** in the project folder.
+## Trading safety
+
+Crypto and Gold remain `paper=true` and `mode=shadow` by default. Live execution is not enabled by the catalog and should only be introduced after independent risk controls, audit logging, canarying, and explicit approval are in place.
+
+## Run locally
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-If PowerShell blocks activation, run once as admin:
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
----
-
-## 4) Configure environment
-
-1. Copy env template:
-
-```powershell
 Copy-Item .env.example .env
-```
-
-2. Edit `.env` and set at minimum:
-- `MOTHER_API_KEY`
-- `MOTHER_JWT_SECRET`
-
-For minimal boot + health check, defaults are enough. Exchange and LinkedIn secrets are only needed when using those features.
-
----
-
-## 5) Run
-
-```powershell
+python -m mother_ai.run --smoke-test
 python -m mother_ai.run
 ```
 
-Server URL:
-- `http://127.0.0.1:8000`
+Gateway: `http://127.0.0.1:8000`
 
----
-
-## 6) Smallest smoke test (required)
-
-### Preflight smoke test (no server)
+For the Streamlit console:
 
 ```powershell
-python -m mother_ai.run --smoke-test
+streamlit run streamlit_app.py
 ```
 
-Expected output shape:
+The Streamlit console starts the private gateway on `MOTHER_BACKEND_PORT` (default `8001`) and validates liveness before use.
 
-```json
-{"ok": true, "app": "Mother AI Gateway", "agents_loaded": ["..."]}
-```
+## API contract
 
-### HTTP health check (running server)
+- `GET /healthz` — process liveness and API version.
+- `GET /readyz` — database, registry, and runtime readiness.
+- `GET /status` — complete runtime state.
+- `GET /agents` — loaded runtime agents.
+- `GET /catalog` — all 50 product capabilities.
+- `GET /agents/{agent_key}` — one runtime agent.
+- `POST /start` / `POST /stop` — authenticated lifecycle control.
 
-```powershell
-curl http://127.0.0.1:8000/healthz
-```
+## Google Cloud target
 
-Expected response:
+- Cloud Run: stateless gateway/API/console services.
+- GKE: only persistent or specialized long-running agents.
+- Cloud SQL PostgreSQL: production durable state.
+- Pub/Sub: production event bus.
+- Vertex AI: managed model training/evaluation/inference where appropriate.
+- Secret Manager: credentials and API secrets.
+- Artifact Registry: immutable images.
+- Cloud Storage: reports, models, backups, and artifacts.
+- Cloud Monitoring/Logging: observability.
+- IAM: least privilege.
+- Cloud Build/GitHub Actions: CI/CD.
 
-```json
-{"status":"ok"}
-```
+See `docs/AGENT_CATALOG_V1.md` and `docs/ARCHITECTURE_V2.md` for the detailed design.
 
----
+## Security
 
-## 7) Minimal API verification
-
-After starting the server:
-
-```powershell
-curl http://127.0.0.1:8000/readyz
-```
-
-Expected:
-
-```json
-{"ready":true}
-```
-
----
-
-## 8) Notes
-
-- `MOTHER_BINANCE_KEY` / `MOTHER_BINANCE_SECRET` are required **only** for live exchange operations.
-- LinkedIn env vars are required only for `/agents/linkedin/*` endpoints.
-- Keep `.env` private and never commit secrets.
+Never commit `.env`, exchange keys, OAuth secrets, JWT secrets, or webhook credentials. Use environment variables locally and Secret Manager in production.
