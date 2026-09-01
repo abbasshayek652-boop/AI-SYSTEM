@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 from pathlib import Path
@@ -34,14 +35,26 @@ def _write_pid_file() -> Path | None:
     return path
 
 
+def _remove_runtime_files(pid_file: Path | None) -> None:
+    if pid_file is not None:
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+    lock_raw = os.getenv("MOTHER_BACKEND_LOCK")
+    if lock_raw:
+        try:
+            Path(lock_raw).unlink()
+        except OSError:
+            pass
+
+
 def _run_server() -> None:
-    import atexit
     import uvicorn
 
     port = int(os.getenv("PORT", 8000))
     pid_file = _write_pid_file()
-    if pid_file is not None:
-        atexit.register(lambda: pid_file.unlink(missing_ok=True))
+    atexit.register(_remove_runtime_files, pid_file)
     uvicorn.run("mother_ai.gateway:app", host="0.0.0.0", port=port, reload=False)
 
 
