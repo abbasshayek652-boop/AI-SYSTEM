@@ -1,8 +1,6 @@
 """Mother AI Streamlit control plane.
 
-The Streamlit process owns the UI while the FastAPI gateway runs on a private
-loopback port. The UI talks only to the gateway API and never imports agent
-implementation details directly.
+The UI owns presentation only. FastAPI remains the single control-plane API.
 """
 from __future__ import annotations
 
@@ -16,7 +14,6 @@ from typing import Any
 
 import httpx
 import streamlit as st
-
 
 st.set_page_config(page_title="Mother AI Control Plane", page_icon="🤖", layout="wide")
 
@@ -43,6 +40,19 @@ class Client:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
+    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            response = httpx.request(method, f"{API_BASE}{path}", json=payload, headers=self.headers(), timeout=30)
+            if response.is_error:
+                try:
+                    detail = response.json().get("detail", response.text)
+                except Exception:
+                    detail = response.text
+                return {"error": f"HTTP {response.status_code}: {detail}"}
+            return response.json()
+        except httpx.HTTPError as exc:
+            return {"error": f"Gateway unavailable: {exc}"}
+
     def login(self, api_key: str, email: str, role: str) -> dict[str, Any]:
         try:
             response = httpx.post(
@@ -57,25 +67,6 @@ class Client:
         except httpx.HTTPError as exc:
             return {"error": f"Gateway unavailable: {exc}"}
 
-    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        try:
-            response = httpx.request(
-                method,
-                f"{API_BASE}{path}",
-                json=payload,
-                headers=self.headers(),
-                timeout=30,
-            )
-            if response.is_error:
-                try:
-                    detail = response.json().get("detail", response.text)
-                except Exception:
-                    detail = response.text
-                return {"error": f"HTTP {response.status_code}: {detail}"}
-            return response.json()
-        except httpx.HTTPError as exc:
-            return {"error": f"Gateway unavailable: {exc}"}
-
     def get(self, path: str) -> dict[str, Any]:
         return self.request("GET", path)
 
@@ -86,37 +77,19 @@ class Client:
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
+        return True
     except OSError:
         return False
-    return True
 
 
-def _read_lock_pid() -> int | None:
+def _lock_pid() -> int | None:
     try:
         return int(LOCK_FILE.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
 
 
-def _acquire_start_lock() -> bool:
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(str(os.getpid()))
-        return True
-    except FileExistsError:
-        pid = _read_lock_pid()
-        if pid is None or not _pid_alive(pid):
-            try:
-                LOCK_FILE.unlink()
-            except OSError:
-                return False
-            return _acquire_start_lock()
-        return False
-
-
-def _release_start_lock() -> None:
+def _release_lock() -> None:
     try:
         LOCK_FILE.unlink()
     except OSError:
@@ -125,8 +98,7 @@ def _release_start_lock() -> None:
 
 def _healthy() -> bool:
     try:
-        response = httpx.get(f"{API_BASE}/healthz", timeout=2)
-        return response.is_success
+        return httpx.get(f"{API_BASE}/healthz", timeout=2).is_success
     except httpx.HTTPError:
         return False
 
@@ -135,18 +107,25 @@ def ensure_backend() -> None:
     process = st.session_state.get("backend_process")
     if process is not None and process.poll() is None:
         return
-
     if _healthy():
-        st.session_state["backend_started"] = False
         return
 
-    acquired = _acquire_start_lock()
-    if not acquired:
-        # Another Streamlit session/process is starting the gateway. Wait for it
-        # instead of launching a competing server on the same port.
-        for _ in range(30):
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+        owner = True
+    except FileExistsError:
+        owner = False
+        pid = _lock_pid()
+        if pid is None or not _pid_alive(pid):
+            _release_lock()
+            return ensure_backend()
+
+    if not owner:
+        for _ in range(40):
             if _healthy():
-                st.session_state["backend_started"] = False
                 return
             time.sleep(0.25)
         raise RuntimeError(f"Gateway did not become healthy on {API_BASE}")
@@ -165,19 +144,16 @@ def ensure_backend() -> None:
         )
         st.session_state["backend_process"] = process
         st.session_state["backend_log_handle"] = log_handle
-        for _ in range(40):
+        for _ in range(50):
             if _healthy():
-                st.session_state["backend_started"] = True
                 return
             if process.poll() is not None:
-                raise RuntimeError(
-                    f"Mother AI gateway exited during startup. See {LOG_FILE} for details."
-                )
+                raise RuntimeError(f"Mother AI gateway exited during startup. See {LOG_FILE}.")
             time.sleep(0.25)
         process.terminate()
         raise RuntimeError(f"Mother AI gateway did not become healthy on {API_BASE}")
     finally:
-        _release_start_lock()
+        _release_lock()
 
 
 try:
@@ -187,17 +163,15 @@ except Exception as exc:
     st.code(str(exc))
     st.stop()
 
-
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.token = None
     st.session_state.email = None
     st.session_state.role = None
 
-
 if not st.session_state.authenticated:
     st.title("🤖 Mother AI")
-    st.caption("Secure AI orchestration and agent control plane")
+    st.caption("Executive AI orchestration and control plane")
     with st.form("login"):
         api_key = st.text_input("API Key", type="password")
         email = st.text_input("Email")
@@ -219,137 +193,127 @@ if not st.session_state.authenticated:
     st.caption(f"Gateway: {API_BASE}")
     st.stop()
 
-
 client = Client(st.session_state.token)
 health = client.get("/healthz")
 ready = client.get("/readyz")
 status_payload = client.get("/status")
 agent_payload = client.get("/agents")
+catalog_payload = client.get("/catalog")
+executive = client.get("/executive/status")
 
-if any("error" in result for result in (health, ready, status_payload, agent_payload)):
+results = {"health": health, "ready": ready, "status": status_payload, "agents": agent_payload, "catalog": catalog_payload, "executive": executive}
+errors = {name: value["error"] for name, value in results.items() if isinstance(value, dict) and "error" in value}
+if errors:
     st.error("The gateway is reachable but one or more control-plane requests failed.")
-    for name, result in (("health", health), ("ready", ready), ("status", status_payload), ("agents", agent_payload)):
-        if "error" in result:
-            st.warning(f"{name}: {result['error']}")
+    for name, error in errors.items():
+        st.warning(f"{name}: {error}")
 
 st.title("🤖 Mother AI Control Plane")
-st.caption(f"{st.session_state.email} · {st.session_state.role} · {API_BASE}")
+st.caption(f"{st.session_state.email} · {st.session_state.role} · API {health.get('api_version', 'unknown')}")
 
-header_left, header_right = st.columns([5, 1])
-with header_right:
-    if st.button("↻ Refresh", use_container_width=True):
-        st.rerun()
-if st.button("Logout"):
-    st.session_state.authenticated = False
-    st.session_state.token = None
-    st.session_state.email = None
-    st.session_state.role = None
+if st.button("↻ Refresh", use_container_width=False):
     st.rerun()
 
-agents = agent_payload.get("agents", []) if isinstance(agent_payload.get("agents"), list) else []
+runtime_agents = agent_payload.get("agents", []) if isinstance(agent_payload.get("agents"), list) else []
+catalog_agents = catalog_payload.get("agents", []) if isinstance(catalog_payload.get("agents"), list) else []
 
-st.divider()
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Gateway", "ONLINE" if "error" not in health else "OFFLINE")
 m2.metric("System", "READY" if ready.get("ready") else "NOT READY")
-m3.metric("Agents", int(agent_payload.get("count", len(agents))))
-m4.metric("Running", int(agent_payload.get("running_count", 0)))
+m3.metric("Catalog", int(catalog_payload.get("count", 0)))
+m4.metric("Runtime", int(catalog_payload.get("loaded_count", len(runtime_agents))))
+m5.metric("Running", int(catalog_payload.get("running_count", 0)))
 
 circuit = status_payload.get("circuit_breaker", {})
 if isinstance(circuit, dict) and circuit.get("open"):
-    st.error("⚠️ Control circuit is OPEN. Agent start/stop operations are blocked.")
+    st.error("⚠️ Control circuit is OPEN. Agent operations are blocked.")
 
 st.divider()
-st.subheader("Agents")
-st.caption("Agent controls operate through the authenticated FastAPI supervisor.")
+tab_runtime, tab_catalog, tab_executive, tab_health = st.tabs(["Runtime Agents", "Complete Catalog", "Mother Executive", "System Health"])
 
-if not agents:
-    st.info("No agents are currently loaded. Check /readyz and registry.json.")
-else:
-    for row in range(0, len(agents), 2):
-        columns = st.columns(2)
-        for column, agent in zip(columns, agents[row : row + 2]):
+with tab_runtime:
+    st.subheader("Runtime Agents")
+    st.caption("Only agents loaded by registry.json appear here. Catalog-only capabilities are shown separately.")
+    if not runtime_agents:
+        st.info("No runtime agents are loaded.")
+    for row in range(0, len(runtime_agents), 2):
+        cols = st.columns(2)
+        for column, agent in zip(cols, runtime_agents[row : row + 2]):
             with column:
                 key = str(agent.get("key", "unknown"))
                 running = bool(agent.get("running"))
                 healthy_agent = bool(agent.get("healthy", False))
                 mode = agent.get("mode") or (agent.get("registry") or {}).get("config", {}).get("mode") or "standard"
-                class_name = agent.get("class_name", "Agent")
                 state = "RUNNING" if running else "STOPPED"
                 if not healthy_agent:
                     state = "DEGRADED"
-
                 with st.container(border=True):
-                    title_col, state_col = st.columns([3, 1])
-                    with title_col:
-                        st.markdown(f"### {key.title()}")
-                        st.caption(f"{class_name} · mode: {mode}")
-                    with state_col:
-                        st.metric("State", state)
-
+                    st.markdown(f"### {agent.get('name', key).title()}")
+                    st.caption(f"{agent.get('class_name', 'Agent')} · {agent.get('layer', 'Runtime')} · mode: {mode}")
+                    st.metric("State", state)
                     if agent.get("description"):
                         st.write(agent["description"])
-
-                    last_error = agent.get("last_error") or agent.get("status_error")
-                    if last_error:
-                        st.warning(f"Last error: {last_error}")
-
-                    last_tick = agent.get("last_tick_ts")
-                    if last_tick:
-                        st.caption(f"Last tick: {last_tick}")
-
+                    if agent.get("status_error"):
+                        st.warning(agent["status_error"])
                     b1, b2 = st.columns(2)
                     can_control = st.session_state.role in {"operator", "admin"}
                     with b1:
                         if st.button("▶ Start", key=f"start_{key}", disabled=running or not can_control, use_container_width=True):
                             result = client.post("/start", {"agent_key": key})
-                            if "error" in result:
-                                st.error(result["error"])
-                            else:
-                                st.success(f"{key} started")
-                                time.sleep(0.3)
-                                st.rerun()
+                            if "error" in result: st.error(result["error"])
+                            else: st.success(f"{key} started"); time.sleep(0.3); st.rerun()
                     with b2:
                         if st.button("■ Stop", key=f"stop_{key}", disabled=not running or not can_control, use_container_width=True):
                             result = client.post("/stop", {"agent_key": key})
-                            if "error" in result:
-                                st.error(result["error"])
-                            else:
-                                st.success(f"{key} stopped")
-                                time.sleep(0.3)
-                                st.rerun()
+                            if "error" in result: st.error(result["error"])
+                            else: st.success(f"{key} stopped"); time.sleep(0.3); st.rerun()
+
+with tab_catalog:
+    st.subheader("Complete Agent Catalog v1.0")
+    st.caption("50 planned capabilities. 'Scaffold' means the interface exists conceptually but has no business side effects yet.")
+    layer_filter = st.selectbox("Layer", ["All"] + list(dict.fromkeys(str(a.get("layer")) for a in catalog_agents)))
+    filtered = [a for a in catalog_agents if layer_filter == "All" or a.get("layer") == layer_filter]
+    for agent in filtered:
+        runtime = agent.get("runtime", {})
+        implementation = agent.get("implementation", "scaffold")
+        status = "RUNNING" if runtime.get("running") else ("LOADED" if runtime.get("loaded") else implementation.upper())
+        with st.container(border=True):
+            left, right = st.columns([4, 1])
+            with left:
+                st.markdown(f"**{agent['name']}**  ·  `{agent['key']}`")
+                st.caption(f"{agent['layer']} · {agent['role']}")
+                st.write(" · ".join(agent.get("capabilities", [])))
+            with right:
+                st.metric("Status", status)
+
+with tab_executive:
+    st.subheader("Mother Executive")
+    st.json(executive)
+    if st.session_state.role in {"operator", "admin"}:
+        st.markdown("#### Create decision")
+        objective = st.text_area("Objective")
+        targets = st.multiselect("Target runtime agents", [a.get("key") for a in runtime_agents])
+        priority = st.slider("Priority", 0, 100, 50)
+        action = st.text_input("Action", "plan")
+        if st.button("Create decision", type="primary"):
+            result = client.post("/executive/decide", {"objective": objective, "target_agents": targets, "priority": priority, "action": action})
+            if "error" in result: st.error(result["error"])
+            else: st.success(f"Decision created: {result.get('id')}"); st.json(result)
+
+with tab_health:
+    st.subheader("System Health")
+    st.json({"health": health, "readiness": ready, "status": status_payload, "catalog": {"count": catalog_payload.get("count"), "loaded": catalog_payload.get("loaded_count")}, "executive": executive})
+    with st.expander("Backend diagnostics"):
+        if LOG_FILE.exists():
+            lines = LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()
+            st.code("\n".join(lines[-100:]), language="text")
+        else:
+            st.info("No backend log file yet.")
+    with st.expander("Raw catalog JSON"):
+        st.code(json.dumps(catalog_payload, indent=2, default=str), language="json")
 
 st.divider()
-left, right = st.columns(2)
-with left:
-    st.subheader("System Health")
-    health_view = {
-        "gateway": health,
-        "readiness": ready,
-        "agent_count": agent_payload.get("count", 0),
-        "running_count": agent_payload.get("running_count", 0),
-        "healthy_count": agent_payload.get("healthy_count", 0),
-    }
-    st.json(health_view)
-
-with right:
-    st.subheader("Control & Audit")
-    st.json({
-        "circuit_breaker": circuit,
-        "last_audit_ts": status_payload.get("last_audit_ts"),
-        "timestamp": status_payload.get("timestamp"),
-    })
-
-with st.expander("Raw agent data"):
-    st.code(json.dumps(agent_payload, indent=2, default=str), language="json")
-
-with st.expander("Backend diagnostics"):
-    st.caption(f"Backend log: {LOG_FILE}")
-    if LOG_FILE.exists():
-        try:
-            lines = LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()
-            st.code("\n".join(lines[-100:]) or "No backend log output yet.", language="text")
-        except OSError as exc:
-            st.warning(str(exc))
-    else:
-        st.info("No backend log file has been created yet.")
+if st.button("Logout"):
+    for key in ("authenticated", "token", "email", "role"):
+        st.session_state[key] = False if key == "authenticated" else None
+    st.rerun()
