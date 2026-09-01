@@ -1,8 +1,8 @@
 """Mother AI Streamlit control plane.
 
-Streamlit is the only UI. FastAPI remains the local control-plane API and all
-50 catalog capabilities are represented by runtime agents. External side
- effects stay disabled until an explicit integration is implemented.
+Streamlit is the UI and owns one local FastAPI gateway process.  The launcher
+is deliberately defensive because Streamlit can execute multiple sessions in
+the same Linux container; only one gateway may bind the configured port.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -60,7 +61,12 @@ class Client:
 
     def login(self, api_key: str, email: str, role: str) -> dict[str, Any]:
         try:
-            response = httpx.post(f"{API_BASE}/auth/login", json={"email": email, "role": role}, headers={"X-API-Key": api_key}, timeout=15)
+            response = httpx.post(
+                f"{API_BASE}/auth/login",
+                json={"email": email, "role": role},
+                headers={"X-API-Key": api_key},
+                timeout=15,
+            )
             if response.is_error:
                 return {"error": f"HTTP {response.status_code}: {response.text}"}
             return response.json()
@@ -84,19 +90,31 @@ def _pid_alive(pid: int) -> bool:
 
 def _read_pid() -> int | None:
     try:
-        return int(PID_FILE.read_text(encoding="utf-8").strip())
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        return pid if pid > 0 else None
     except (OSError, ValueError):
         return None
 
 
+def _port_open() -> bool:
+    """Return True when something is listening on the configured TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.25)
+        try:
+            return sock.connect_ex((BACKEND_HOST, BACKEND_PORT)) == 0
+        except OSError:
+            return False
+
+
 def _kill_backend() -> None:
+    """Stop only a gateway recorded by our PID file."""
     pid = _read_pid()
     if pid is not None and pid != os.getpid() and _pid_alive(pid):
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
-        for _ in range(20):
+        for _ in range(30):
             if not _pid_alive(pid):
                 break
             time.sleep(0.1)
@@ -104,6 +122,28 @@ def _kill_backend() -> None:
         PID_FILE.unlink()
     except OSError:
         pass
+
+
+def _kill_port_owner() -> None:
+    """Recover a stale listener when no valid PID file exists.
+
+    Streamlit Community Cloud runs on Linux.  ``fuser`` is preferred because it
+    targets the configured TCP port instead of blindly killing Python processes.
+    """
+    try:
+        subprocess.run(
+            ["fuser", "-k", f"{BACKEND_PORT}/tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        pass
+    for _ in range(20):
+        if not _port_open():
+            return
+        time.sleep(0.1)
 
 
 def _release_lock() -> None:
@@ -119,9 +159,31 @@ def _healthy() -> bool:
         if not response.is_success:
             return False
         data = response.json()
-        return data.get("api_version") == API_VERSION
+        return data.get("api_version") == API_VERSION and data.get("status") in {"ok", "healthy"}
     except (httpx.HTTPError, ValueError):
         return False
+
+
+def _acquire_lock() -> bool:
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+        return True
+    except FileExistsError:
+        return False
+
+
+def _recover_stale_lock() -> None:
+    """Remove a lock whose recorded owner is no longer alive."""
+    try:
+        owner = int(LOCK_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        _release_lock()
+        return
+    if owner != os.getpid() and not _pid_alive(owner):
+        _release_lock()
 
 
 def ensure_backend() -> None:
@@ -129,51 +191,76 @@ def ensure_backend() -> None:
     if process is not None and process.poll() is None and _healthy():
         return
 
-    # A previous Streamlit session may have left an old gateway alive. The
-    # PID file lets the current session replace only the gateway it owns.
-    if not _healthy():
-        _kill_backend()
+    # First preference: reuse an already healthy gateway.  This prevents every
+    # Streamlit rerun/session from trying to launch another uvicorn instance.
+    if _healthy():
+        return
 
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(str(os.getpid()))
-        owner = True
-    except FileExistsError:
-        owner = False
+    # If the previous backend belongs to this application, stop it cleanly.
+    _kill_backend()
+    _recover_stale_lock()
 
+    # Another Streamlit session may be starting the gateway right now.
+    owner = _acquire_lock()
     if not owner:
-        for _ in range(40):
+        for _ in range(80):
             if _healthy():
                 return
-            pid = _read_pid()
-            if pid is None or not _pid_alive(pid):
-                _release_lock()
-                return ensure_backend()
+            _recover_stale_lock()
+            if _acquire_lock():
+                owner = True
+                break
             time.sleep(0.25)
-        raise RuntimeError(f"Gateway did not become healthy on {API_BASE}")
+        if not owner:
+            raise RuntimeError(f"Another Streamlit session owns the gateway lock and {API_BASE} never became healthy.")
 
+    process = None
+    log_handle = None
     try:
-        if _healthy():
-            return
+        # The port can be occupied by a previous process that has no PID file.
+        # Never launch into a known occupied port.
+        if _port_open() and not _healthy():
+            _kill_port_owner()
+        if _port_open():
+            raise RuntimeError(f"Gateway port {BACKEND_PORT} is already in use by an unhealthy process.")
+
         env = os.environ.copy()
         env["PORT"] = str(BACKEND_PORT)
         env["MOTHER_PID_FILE"] = str(PID_FILE)
+        env["MOTHER_BACKEND_LOCK"] = str(LOCK_FILE)
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         log_handle = LOG_FILE.open("a", encoding="utf-8")
-        process = subprocess.Popen([sys.executable, "-m", "mother_ai.run"], env=env, stdout=log_handle, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(
+            [sys.executable, "-m", "mother_ai.run"],
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
         st.session_state["backend_process"] = process
         st.session_state["backend_log_handle"] = log_handle
-        for _ in range(60):
+
+        for _ in range(80):
             if _healthy():
+                # Do NOT release the lock here.  The backend owns it for its
+                # lifetime and mother_ai.run removes it on process exit.
                 return
             if process.poll() is not None:
-                raise RuntimeError(f"Mother AI gateway exited during startup. See {LOG_FILE}.")
+                tail = ""
+                if LOG_FILE.exists():
+                    tail = "\n".join(LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()[-30:])
+                raise RuntimeError(f"Mother AI gateway exited during startup. See {LOG_FILE}.\n\n{tail}")
             time.sleep(0.25)
         process.terminate()
         raise RuntimeError(f"Mother AI gateway did not become healthy on {API_BASE}")
-    finally:
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.terminate()
         _release_lock()
+        raise
+    finally:
+        if log_handle is not None and process is not None and process.poll() is not None:
+            log_handle.close()
 
 
 try:
@@ -182,7 +269,7 @@ except Exception as exc:
     st.error(f"Gateway startup failed: {exc}")
     st.code(str(exc))
     if LOG_FILE.exists():
-        st.code("\n".join(LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()[-80:]), language="text")
+        st.code("\n".join(LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()[-100:]), language="text")
     st.stop()
 
 if "authenticated" not in st.session_state:
@@ -316,10 +403,8 @@ with tab_execute:
             if not isinstance(payload, dict):
                 raise ValueError("Payload must be a JSON object")
             result = client.post(f"/agents/{selected}/execute", {"action": action, "payload": payload})
-            if "error" in result:
-                st.error(result["error"])
-            else:
-                st.json(result)
+            if "error" in result: st.error(result["error"])
+            else: st.json(result)
         except (ValueError, json.JSONDecodeError) as exc:
             st.error(f"Invalid payload: {exc}")
 
