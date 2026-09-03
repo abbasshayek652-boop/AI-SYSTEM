@@ -6,12 +6,9 @@ from ai.base_agent import Agent
 
 
 class ScaffoldAgent(Agent):
-    """Safe placeholder for a catalog capability.
+    """Safe placeholder for a catalog capability."""
 
-    Scaffold agents never call external services and never perform consequential
-    actions. They provide lifecycle/status behavior until a domain implementation
-    is promoted into the runtime registry with tests and policies.
-    """
+    name = "Scaffold Agent"
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config or {})
@@ -23,7 +20,7 @@ class ScaffoldAgent(Agent):
     async def stop(self) -> None:
         self.running = False
 
-    def status(self) -> dict[str, Any]:
+    async def status(self) -> dict[str, Any]:
         return {
             "key": self.capability_key,
             "running": self.running,
