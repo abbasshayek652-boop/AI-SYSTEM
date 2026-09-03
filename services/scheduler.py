@@ -6,6 +6,8 @@ from typing import Awaitable, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from services.event_retention import compact_events
+
 StatusProvider = Callable[[], Awaitable[dict[str, object]]]
 Notifier = Callable[[str, dict[str, object]], Awaitable[None]]
 LOGGER = logging.getLogger("scheduler")
@@ -40,8 +42,6 @@ class ControlScheduler:
         try:
             self._scheduler.shutdown(wait=False)
         except RuntimeError as exc:
-            # APScheduler retains the loop it was started on. Tests and embedded
-            # runners may close that loop before shutdown is invoked.
             if "Event loop is closed" not in str(exc):
                 raise
         finally:
@@ -57,7 +57,8 @@ class ControlScheduler:
 
     async def _weekly_compaction(self) -> None:
         try:
-            payload = {"event": "audit_compaction", "ts": dt.datetime.now(dt.timezone.utc).isoformat()}
+            removed = compact_events(keep_days=90)
+            payload = {"event": "audit_compaction", "ts": dt.datetime.now(dt.timezone.utc).isoformat(), "removed": removed}
             await self._notifier("weekly_audit", payload)
         except Exception:  # noqa: BLE001
             LOGGER.exception("Weekly audit event failed")
