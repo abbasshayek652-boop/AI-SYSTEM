@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
-
 import requests
+
 from agents.linkedin_agent import oauth, storage
 from agents.linkedin_agent.models import ScheduleRequest, TokenBundle
 from agents.linkedin_agent.service import service
@@ -29,6 +29,14 @@ def _temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     service._daily_reset = dt.date.today()
     yield
     storage.configure(str(original_path))
+
+
+def _response(status: int, payload: Dict[str, Any]) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response._content = __import__("json").dumps(payload).encode("utf-8")
+    response.headers["Content-Type"] = "application/json"
+    return response
 
 
 def test_login_url_contains_expected_state():
@@ -55,15 +63,13 @@ def test_callback_persists_tokens(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_post_text_builds_payload(monkeypatch: pytest.MonkeyPatch):
-    bundle = TokenBundle(access_token="token", expires_at=time.time() + 3600)
-    storage.save_tokens(bundle)
+    storage.save_tokens(TokenBundle(access_token="token", expires_at=time.time() + 3600))
     monkeypatch.setattr(oauth, "get_userinfo", lambda token: {"sub": "urn:li:person:abc"})
-
     captured: Dict[str, Any] = {}
 
     def fake_post(url: str, json: Dict[str, Any], headers: Dict[str, str]):
         captured.update({"url": url, "json": json, "headers": headers})
-        return requests.Response(status_code=201, data={"id": "123"})
+        return _response(201, {"id": "123"})
 
     monkeypatch.setattr(requests, "post", fake_post)
     result = service.post_text("Hello LinkedIn", "PUBLIC")
@@ -74,15 +80,13 @@ def test_post_text_builds_payload(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_scheduler_publishes_due(monkeypatch: pytest.MonkeyPatch):
-    bundle = TokenBundle(access_token="token", expires_at=time.time() + 3600)
-    storage.save_tokens(bundle)
+    storage.save_tokens(TokenBundle(access_token="token", expires_at=time.time() + 3600))
     monkeypatch.setattr(oauth, "get_userinfo", lambda token: {"sub": "urn:li:person:owner"})
-
     published: list[str] = []
 
     def fake_post(url: str, json: Dict[str, Any], headers: Dict[str, str]):
         published.append(json["commentary"])
-        return requests.Response(status_code=200, data={"ok": True})
+        return _response(200, {"ok": True})
 
     monkeypatch.setattr(requests, "post", fake_post)
     run_time = dt.datetime.utcnow()

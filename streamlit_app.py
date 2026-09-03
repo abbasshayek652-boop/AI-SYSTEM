@@ -28,6 +28,14 @@ BACKEND_PORT = int(os.getenv("MOTHER_BACKEND_PORT", "8001"))
 API_BASE = os.getenv("API_BASE", f"http://{BACKEND_HOST}:{BACKEND_PORT}").rstrip("/")
 LOCK_FILE = pathlib.Path(os.getenv("MOTHER_BACKEND_LOCK", ".mother_ai_backend.lock"))
 LOG_FILE = pathlib.Path(os.getenv("MOTHER_BACKEND_LOG", "mother_ai_backend.log"))
+EXPECTED_API_VERSION = os.getenv("MOTHER_API_VERSION", "2.2")
+STARTUP_TIMEOUT_SECONDS = float(os.getenv("MOTHER_BACKEND_STARTUP_TIMEOUT", "30"))
+
+# Streamlit reruns the script for every interaction. Module globals survive those
+# reruns within the same Streamlit process, unlike st.session_state, so the
+# backend process is shared by all browser sessions in this app instance.
+_BACKEND_PROCESS: subprocess.Popen[bytes] | None = None
+_BACKEND_LOG_HANDLE: Any | None = None
 
 
 class Client:
@@ -98,15 +106,44 @@ def _release_lock() -> None:
 
 def _healthy() -> bool:
     try:
-        return httpx.get(f"{API_BASE}/healthz", timeout=2).is_success
-    except httpx.HTTPError:
+        response = httpx.get(f"{API_BASE}/healthz", timeout=2)
+        if not response.is_success:
+            return False
+        payload = response.json()
+        return payload.get("api_version") == EXPECTED_API_VERSION
+    except (httpx.HTTPError, ValueError):
         return False
 
 
+def _cleanup_failed_process(process: subprocess.Popen[bytes]) -> None:
+    global _BACKEND_PROCESS, _BACKEND_LOG_HANDLE
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    if _BACKEND_LOG_HANDLE is not None:
+        try:
+            _BACKEND_LOG_HANDLE.close()
+        except OSError:
+            pass
+    _BACKEND_PROCESS = None
+    _BACKEND_LOG_HANDLE = None
+
+
 def ensure_backend() -> None:
-    process = st.session_state.get("backend_process")
-    if process is not None and process.poll() is None:
-        return
+    global _BACKEND_PROCESS, _BACKEND_LOG_HANDLE
+
+    if _BACKEND_PROCESS is not None:
+        if _BACKEND_PROCESS.poll() is None:
+            if _healthy():
+                return
+        else:
+            _cleanup_failed_process(_BACKEND_PROCESS)
+
+    # A gateway may already be running independently of this Streamlit process.
     if _healthy():
         return
 
@@ -114,6 +151,8 @@ def ensure_backend() -> None:
     try:
         fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            # Store the Streamlit process PID as the lock owner. The lock is held
+            # only for startup and is released after the shared gateway is healthy.
             handle.write(str(os.getpid()))
         owner = True
     except FileExistsError:
@@ -124,15 +163,19 @@ def ensure_backend() -> None:
             return ensure_backend()
 
     if not owner:
-        for _ in range(40):
+        deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
             if _healthy():
                 return
             time.sleep(0.25)
-        raise RuntimeError(f"Gateway did not become healthy on {API_BASE}")
+        raise RuntimeError(f"Gateway did not become healthy on {API_BASE} within {STARTUP_TIMEOUT_SECONDS:g}s")
 
     try:
+        # Re-check after acquiring the lock because another process could have
+        # completed startup between the first health check and lock creation.
         if _healthy():
             return
+
         env = os.environ.copy()
         env["PORT"] = str(BACKEND_PORT)
         log_handle = LOG_FILE.open("a", encoding="utf-8")
@@ -142,16 +185,27 @@ def ensure_backend() -> None:
             stdout=log_handle,
             stderr=subprocess.STDOUT,
         )
-        st.session_state["backend_process"] = process
-        st.session_state["backend_log_handle"] = log_handle
-        for _ in range(50):
+        _BACKEND_PROCESS = process
+        _BACKEND_LOG_HANDLE = log_handle
+
+        deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
             if _healthy():
                 return
             if process.poll() is not None:
                 raise RuntimeError(f"Mother AI gateway exited during startup. See {LOG_FILE}.")
             time.sleep(0.25)
-        process.terminate()
-        raise RuntimeError(f"Mother AI gateway did not become healthy on {API_BASE}")
+
+        raise RuntimeError(f"Mother AI gateway did not become healthy on {API_BASE} within {STARTUP_TIMEOUT_SECONDS:g}s")
+    except Exception:
+        if _BACKEND_PROCESS is not None:
+            _cleanup_failed_process(_BACKEND_PROCESS)
+        else:
+            try:
+                log_handle.close()  # type: ignore[possibly-undefined]
+            except (NameError, OSError):
+                pass
+        raise
     finally:
         _release_lock()
 
