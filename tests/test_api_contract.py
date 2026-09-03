@@ -4,17 +4,17 @@ from gateway import app
 
 
 def test_control_plane_routes_exist() -> None:
-    routes = {(getattr(route, "path", None), tuple(sorted(getattr(route, "methods", set())))) for route in app.routes}
-    assert any(path == "/agents" and "GET" in methods for path, methods in routes)
-    assert any(path == "/agents/{agent_key}" and "GET" in methods for path, methods in routes)
-    assert any(path == "/start" and "POST" in methods for path, methods in routes)
-    assert any(path == "/stop" and "POST" in methods for path, methods in routes)
-    assert any(path == "/healthz" and "GET" in methods for path, methods in routes)
-    assert any(path == "/readyz" and "GET" in methods for path, methods in routes)
-    assert any(path == "/status" and "GET" in methods for path, methods in routes)
-    assert any(path == "/integrations/health" and "GET" in methods for path, methods in routes)
-    assert any(path == "/approvals" and "GET" in methods for path, methods in routes)
-    assert any(path == "/policy" and "GET" in methods for path, methods in routes)
+    paths = app.openapi()["paths"]
+    assert "/agents" in paths and "get" in paths["/agents"]
+    assert "/agents/{agent_key}" in paths and "get" in paths["/agents/{agent_key}"]
+    assert "/start" in paths and "post" in paths["/start"]
+    assert "/stop" in paths and "post" in paths["/stop"]
+    assert "/healthz" in paths and "get" in paths["/healthz"]
+    assert "/readyz" in paths and "get" in paths["/readyz"]
+    assert "/status" in paths and "get" in paths["/status"]
+    assert "/integrations/health" in paths and "get" in paths["/integrations/health"]
+    assert "/approvals" in paths and "get" in paths["/approvals"]
+    assert "/policy" in paths and "get" in paths["/policy"]
 
 
 def test_application_exposes_expected_agent_contract() -> None:
