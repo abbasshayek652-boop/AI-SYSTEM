@@ -15,26 +15,16 @@ def _snapshot(approval: Approval) -> dict[str, Any]:
     return approval.model_dump(mode="json")
 
 
-def request_approval(
-    *,
-    capability: str,
-    target: str,
-    requested_by: str,
-    payload: dict[str, Any] | None = None,
-    reason: str | None = None,
-    correlation_id: str | None = None,
-) -> Approval:
+def get_approval(approval_id: int) -> Approval | None:
+    with Session(engine) as session:
+        return session.get(Approval, approval_id)
+
+
+def request_approval(*, capability: str, target: str, requested_by: str, payload: dict[str, Any] | None = None, reason: str | None = None, correlation_id: str | None = None) -> Approval:
     policy = policy_engine.get(capability)
     if policy is None or policy.level != CapabilityLevel.EXECUTE_WITH_APPROVAL:
         raise ValueError(f"Capability does not require approval or is not permitted: {capability}")
-    approval = Approval(
-        capability=capability,
-        target=target,
-        requested_by=requested_by,
-        payload=payload or {},
-        reason=reason,
-        correlation_id=correlation_id,
-    )
+    approval = Approval(capability=capability, target=target, requested_by=requested_by, payload=payload or {}, reason=reason, correlation_id=correlation_id)
     with Session(engine) as session:
         session.add(approval)
         session.commit()
