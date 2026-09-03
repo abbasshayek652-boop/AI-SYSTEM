@@ -11,6 +11,10 @@ from policy.engine import CapabilityLevel, policy_engine
 from services.event_store import record_event
 
 
+def _snapshot(approval: Approval) -> dict[str, Any]:
+    return approval.model_dump(mode="json")
+
+
 def request_approval(
     *,
     capability: str,
@@ -35,7 +39,7 @@ def request_approval(
         session.add(approval)
         session.commit()
         session.refresh(approval)
-        snapshot = approval.model_dump()
+        snapshot = _snapshot(approval)
     record_event("approval.requested", payload={"approval": snapshot})
     return approval
 
@@ -60,6 +64,6 @@ def decide(approval_id: int, *, approved: bool, decided_by: str, note: str | Non
         session.add(approval)
         session.commit()
         session.refresh(approval)
-        snapshot = approval.model_dump()
+        snapshot = _snapshot(approval)
     record_event("approval.decided", payload={"approval": snapshot})
     return approval
