@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -26,18 +27,22 @@ CONNECTIONS: tuple[ConnectionDefinition, ...] = (
 
 
 def _configured(definition: ConnectionDefinition) -> bool:
-    import os
     return bool(definition.credential_env) and all(os.getenv(name, "").strip() for name in definition.credential_env)
 
 
 def connection_statuses(runtime_agents: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Return configuration state without making network calls.
+
+    The dedicated /integrations/health endpoint performs live checks. Keeping this
+    endpoint network-free makes the Streamlit navigation fast and deterministic.
+    """
     register_default_adapters()
     runtime_agents = runtime_agents or {}
     result: list[dict[str, Any]] = []
     for definition in CONNECTIONS:
         configured = _configured(definition)
         adapter = get(definition.key)
-        health = adapter.health_check() if adapter is not None and configured else None
+        capabilities = list(getattr(adapter, "capabilities", ())) if adapter else []
         related = []
         for key in definition.agent_keys:
             agent = runtime_agents.get(key)
@@ -47,12 +52,12 @@ def connection_statuses(runtime_agents: dict[str, Any] | None = None) -> list[di
         item.pop("credential_env", None)
         item["agent_keys"] = list(definition.agent_keys)
         item["configured"] = configured
-        item["reachable"] = bool(health.reachable) if health else False
-        item["authenticated"] = bool(health.authenticated) if health else False
-        item["last_error"] = health.error if health else None
-        item["status"] = "HEALTHY" if health and health.healthy else ("CONFIGURED" if configured else "NOT_CONFIGURED")
+        item["reachable"] = False
+        item["authenticated"] = False
+        item["last_error"] = None
+        item["status"] = "CONFIGURED" if configured else "NOT_CONFIGURED"
         item["integration_mode"] = "read_only" if definition.key == "binance" else "adapter_ready"
-        item["capabilities"] = list(health.capabilities) if health else []
+        item["capabilities"] = capabilities
         item["agents"] = related
         result.append(item)
     return result
