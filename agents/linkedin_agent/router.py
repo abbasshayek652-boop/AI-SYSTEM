@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 
 from gateway.auth import AuthContext, get_operator
-from services.approvals import get_approval, request_approval
+from services.approvals import claim_approval, finish_approval, get_approval, request_approval
 from .models import PostRequest, ScheduleRequest
 from .service import service
 from .scheduler import start_scheduler
@@ -57,8 +57,26 @@ def publish_approved(approval_id: int, ctx: AuthContext = Depends(get_operator))
         raise HTTPException(status_code=409, detail="Approval is not approved")
     if approval.capability != "content.publish" or approval.target != "linkedin":
         raise HTTPException(status_code=400, detail="Approval is not a LinkedIn publish approval")
-    payload = approval.payload or {}
-    result = service.post_text(str(payload.get("text", "")), str(payload.get("visibility", "PUBLIC")))
+
+    try:
+        claimed = claim_approval(approval_id, claimed_by=ctx.user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    payload = claimed.payload or {}
+    try:
+        if payload.get("doc_path"):
+            result = service.post_document(PostRequest(**payload))
+        else:
+            text = str(payload.get("text", ""))
+            if not text:
+                raise ValueError("Approval payload contains no text")
+            result = service.post_text(text, str(payload.get("visibility", "PUBLIC")))
+        finish_approval(approval_id, success=True, decided_by=ctx.user_id)
+    except Exception as exc:  # noqa: BLE001
+        finish_approval(approval_id, success=False, decided_by=ctx.user_id, note=f"Execution failed: {exc}")
+        raise HTTPException(status_code=502, detail="LinkedIn publish failed") from exc
+
     return {"ok": True, "approval_id": approval_id, "published_by": ctx.user_id, "result": result}
 
 
@@ -78,15 +96,15 @@ def request_document_approval(payload: Dict[str, Any], ctx: AuthContext = Depend
 
 
 @router.post("/agents/linkedin/schedule")
-def schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
+def schedule(payload: Dict[str, Any], ctx: AuthContext = Depends(get_operator)) -> Dict[str, Any]:
     if "run_at" in payload and isinstance(payload["run_at"], str):
         payload["run_at"] = _parse_datetime(payload["run_at"])
     request = ScheduleRequest(**payload)
-    return {"scheduled_id": service.schedule_post(request)}
+    return {"scheduled_id": service.schedule_post(request), "requested_by": ctx.user_id}
 
 
 @router.get("/agents/linkedin/schedule")
-def list_schedule() -> Dict[str, Any]:
+def list_schedule(ctx: AuthContext = Depends(get_operator)) -> Dict[str, Any]:
     return {"items": service.list_scheduled()}
 
 
