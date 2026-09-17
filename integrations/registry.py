@@ -16,6 +16,11 @@ def get(key: str) -> ConnectionAdapter | None:
     return _ADAPTERS.get(key)
 
 
+# Backward-compatible name used by integration routers and older callers.
+def get_adapter(key: str) -> ConnectionAdapter | None:
+    return get(key)
+
+
 def all_adapters() -> list[ConnectionAdapter]:
     return list(_ADAPTERS.values())
 
