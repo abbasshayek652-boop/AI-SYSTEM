@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 from ai.base_agent import Agent
 
 LOGGER = logging.getLogger(__name__)
+BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 
 
 class AgentSpec(BaseModel):
@@ -25,13 +26,24 @@ class Registry(BaseModel):
     agents: List[AgentSpec]
 
 
-def load_registry(path: str = "registry.json") -> Registry:
-    """Read and validate the registry definition from disk."""
-    data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+def load_registry(path: str | pathlib.Path | None = None) -> Registry:
+    """Read and validate the registry independently of the process cwd."""
+    registry_path = pathlib.Path(path) if path is not None else BASE_DIR / "registry.json"
+    if not registry_path.is_absolute():
+        registry_path = BASE_DIR / registry_path
+
     try:
-        return Registry(**data)
-    except ValidationError as exc:  # pragma: no cover - clarity over coverage
-        raise ValueError("Invalid registry configuration") from exc
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry = Registry(**data)
+    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+        raise ValueError(f"Invalid registry configuration: {registry_path}") from exc
+
+    keys = [spec.key for spec in registry.agents]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"Duplicate agent keys in registry: {', '.join(duplicates)}")
+
+    return registry
 
 
 def _resolve_class(module: str, class_name: str) -> Type[Agent]:
@@ -54,4 +66,3 @@ def hydrate_agents(registry: Registry) -> Dict[str, Agent]:
         LOGGER.info("Hydrating agent %s from %s.%s", spec.key, spec.module, spec.class_name)
         instances[spec.key] = cls(spec.config)
     return instances
-

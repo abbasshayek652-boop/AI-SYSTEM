@@ -75,11 +75,12 @@ def _db_ready() -> bool:
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, object]:
+async def healthz(request: Request) -> dict[str, object]:
     return {
         "ok": True,
         "status": "ok",
         "service": "mother_ai",
+        "api_version": getattr(request.app.state, "api_version", "unknown"),
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 

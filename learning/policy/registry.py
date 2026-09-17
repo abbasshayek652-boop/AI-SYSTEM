@@ -22,7 +22,7 @@ def create_policy(
 ) -> Policy:
     payload_json = dumps_payload(payload)
     payload_hash = hash_payload(payload)
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         existing = session.exec(select(Policy)).all()
         policy = Policy(
             version=_next_version(existing),
@@ -32,36 +32,36 @@ def create_policy(
             description=description,
         )
         session.add(policy)
-        session.commit()
+        session.flush()
         if metrics:
             for name, value in metrics.items():
                 session.add(PolicyMetric(policy_id=policy.id or 0, metric_name=name, metric_value=value))
-            session.commit()
+        session.commit()
     return policy
 
 
 def latest_policy(engine, stage: Optional[str] = None) -> Optional[Policy]:
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         policies = session.exec(select(Policy)).all()
-    if stage:
-        policies = [p for p in policies if p.stage == stage]
-    if not policies:
-        return None
-    policies.sort(key=lambda p: (p.version, p.created_ts))
-    return policies[-1]
+        if stage:
+            policies = [p for p in policies if p.stage == stage]
+        if not policies:
+            return None
+        policies.sort(key=lambda p: (p.version, p.created_ts))
+        return policies[-1]
 
 
 def update_stage(engine, policy_id: int, stage: str) -> Optional[Policy]:
-    with Session(engine) as session:
-        policies = session.exec(select(Policy)).all()
-        for policy in policies:
-            if policy.id == policy_id:
-                policy.stage = stage
-                session.commit()
-                return policy
-    return None
+    with Session(engine, expire_on_commit=False) as session:
+        policy = session.get(Policy, policy_id)
+        if policy is None:
+            return None
+        policy.stage = stage
+        session.add(policy)
+        session.commit()
+        return policy
 
 
 def list_policies(engine) -> Iterable[Policy]:
-    with Session(engine) as session:
-        return session.exec(select(Policy)).all()
+    with Session(engine, expire_on_commit=False) as session:
+        return list(session.exec(select(Policy)).all())

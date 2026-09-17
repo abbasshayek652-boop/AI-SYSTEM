@@ -42,3 +42,18 @@ class ContentDraft(SQLModel, table=True):
     body: Optional[str] = None
     status: str = Field(default="draft")
     meta: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+
+
+class Approval(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_ts: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    updated_ts: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    capability: str
+    target: str
+    requested_by: str
+    status: str = Field(default="pending")
+    reason: Optional[str] = None
+    payload: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    decided_by: Optional[str] = None
+    decision_note: Optional[str] = None
+    correlation_id: Optional[str] = None

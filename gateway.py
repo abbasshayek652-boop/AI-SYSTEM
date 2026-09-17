@@ -22,6 +22,7 @@ from gateway.auth import Role, issue_jwt
 from gateway.guards import limiter
 from gateway.metrics import metrics_app, record_gateway_error, set_agent_state
 from gateway.middleware import CorrelationIdMiddleware
+from integrations.bootstrap import register_default_adapters
 from routers import (
     agents_router,
     catalog_router,
@@ -34,8 +35,13 @@ from routers import (
     wallet_router,
 )
 from routers.agents import registry_dryrun as _registry_dryrun, registry_validate as _registry_validate
+from routers.approvals import router as approvals_router
 from routers.control import Command, start_agent as _start_agent, stop_agent as _stop_agent
 from routers.core import status_payload
+from routers.integrations import router as integrations_router
+from routers.observability import router as observability_router
+from routers.policy import router as policy_router
+from services.event_store import record_event
 from services.scheduler import build_scheduler
 from telegram.notify import notify_alert
 
@@ -73,6 +79,10 @@ app.include_router(learning_router)
 app.include_router(wallet_router)
 app.include_router(planner_router)
 app.include_router(console_router)
+app.include_router(observability_router)
+app.include_router(integrations_router)
+app.include_router(approvals_router)
+app.include_router(policy_router)
 
 
 def _ensure_request_app(request: Request) -> Request:
@@ -110,6 +120,7 @@ class LoginResponse(BaseModel):
 async def on_startup() -> None:
     app.state.ready = False
     init_db()
+    register_default_adapters()
     registry = load_registry()
     agents = hydrate_agents(registry)
     supervisor = Supervisor(agents)
@@ -136,6 +147,16 @@ async def on_startup() -> None:
         LOGGER.info("LinkedIn scheduler disabled by registry")
 
     app.state.ready = True
+    record_event(
+        "system.ready",
+        payload={"api_version": app.state.api_version, "runtime_agent_count": len(agents)},
+    )
+    for key, agent in agents.items():
+        record_event(
+            "agent.discovered",
+            agent_key=key,
+            payload={"running": bool(agent.running), "class_name": agent.__class__.__name__},
+        )
     LOGGER.info("Gateway ready with %s runtime agents; catalog contains 50 agents", len(agents))
 
 
@@ -143,6 +164,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     LOGGER.info("Gateway shutdown requested")
     app.state.ready = False
+    record_event("system.shutdown_requested")
     supervisor = getattr(app.state, "supervisor", None)
     if supervisor is not None:
         await supervisor.stop_all()
@@ -166,14 +188,10 @@ async def login(request: Request, payload: LoginRequest, x_api_key: str | None =
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
     token = issue_jwt(payload.email, payload.role)
     LOGGER.info("login", extra={"email": payload.email, "role": payload.role})
+    record_event("auth.login", payload={"role": payload.role.value if hasattr(payload.role, "value") else str(payload.role)})
     return LoginResponse(token=token)
 
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
     return FileResponse(BASE_DIR / "dashboard" / "index.html")
-
-
-@app.get("/healthz", include_in_schema=False)
-async def health_check() -> dict[str, str]:
-    return {"status": "ok", "api_version": app.state.api_version}

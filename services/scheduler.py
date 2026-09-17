@@ -6,6 +6,8 @@ from typing import Awaitable, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from services.event_retention import compact_events
+
 StatusProvider = Callable[[], Awaitable[dict[str, object]]]
 Notifier = Callable[[str, dict[str, object]], Awaitable[None]]
 LOGGER = logging.getLogger("scheduler")
@@ -27,38 +29,9 @@ class ControlScheduler:
     def start(self) -> None:
         if self._started:
             return
-        # Frequent health checks keep the control plane observable. The daily and
-        # weekly jobs are lightweight and only emit notifications/audit events.
-        self._scheduler.add_job(
-            self._self_check,
-            "interval",
-            minutes=5,
-            id="mother-self-check",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
-        self._scheduler.add_job(
-            self._daily_summary,
-            "cron",
-            hour=0,
-            minute=5,
-            id="mother-daily-summary",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
-        self._scheduler.add_job(
-            self._weekly_compaction,
-            "cron",
-            day_of_week="mon",
-            hour=0,
-            minute=15,
-            id="mother-weekly-audit",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
+        self._scheduler.add_job(self._self_check, "interval", minutes=5, id="mother-self-check", replace_existing=True, coalesce=True, max_instances=1)
+        self._scheduler.add_job(self._daily_summary, "cron", hour=0, minute=5, id="mother-daily-summary", replace_existing=True, coalesce=True, max_instances=1)
+        self._scheduler.add_job(self._weekly_compaction, "cron", day_of_week="mon", hour=0, minute=15, id="mother-weekly-audit", replace_existing=True, coalesce=True, max_instances=1)
         self._scheduler.start()
         self._started = True
         LOGGER.info("Control scheduler started")
@@ -66,8 +39,13 @@ class ControlScheduler:
     async def stop(self) -> None:
         if not self._started:
             return
-        self._scheduler.shutdown(wait=False)
-        self._started = False
+        try:
+            self._scheduler.shutdown(wait=False)
+        except RuntimeError as exc:
+            if "Event loop is closed" not in str(exc):
+                raise
+        finally:
+            self._started = False
         LOGGER.info("Control scheduler stopped")
 
     async def _daily_summary(self) -> None:
@@ -79,7 +57,8 @@ class ControlScheduler:
 
     async def _weekly_compaction(self) -> None:
         try:
-            payload = {"event": "audit_compaction", "ts": dt.datetime.now(dt.timezone.utc).isoformat()}
+            removed = compact_events(keep_days=90)
+            payload = {"event": "audit_compaction", "ts": dt.datetime.now(dt.timezone.utc).isoformat(), "removed": removed}
             await self._notifier("weekly_audit", payload)
         except Exception:  # noqa: BLE001
             LOGGER.exception("Weekly audit event failed")
