@@ -57,3 +57,42 @@ def decide(approval_id: int, *, approved: bool, decided_by: str, note: str | Non
         snapshot = _snapshot(approval)
     record_event("approval.decided", payload={"approval": snapshot})
     return approval
+
+
+def claim_approval(approval_id: int, *, claimed_by: str) -> Approval:
+    """Atomically claim an approved action so it cannot be replayed concurrently."""
+    with Session(engine) as session:
+        approval = session.exec(
+            select(Approval).where(Approval.id == approval_id, Approval.status == "approved")
+        ).first()
+        if approval is None:
+            raise LookupError("Approval not found or not approved")
+        approval.status = "executing"
+        approval.updated_ts = dt.datetime.utcnow()
+        approval.decided_by = claimed_by
+        session.add(approval)
+        session.commit()
+        session.refresh(approval)
+        snapshot = _snapshot(approval)
+    record_event("approval.claimed", payload={"approval": snapshot})
+    return approval
+
+
+def finish_approval(approval_id: int, *, success: bool, decided_by: str, note: str | None = None) -> Approval:
+    """Finalize a claimed approval; failed execution returns it to approved for retry."""
+    with Session(engine) as session:
+        approval = session.get(Approval, approval_id)
+        if approval is None:
+            raise LookupError("Approval not found")
+        if approval.status != "executing":
+            raise ValueError("Approval is not executing")
+        approval.status = "executed" if success else "approved"
+        approval.updated_ts = dt.datetime.utcnow()
+        if note:
+            approval.decision_note = note
+        session.add(approval)
+        session.commit()
+        session.refresh(approval)
+        snapshot = _snapshot(approval)
+    record_event("approval.executed" if success else "approval.execution_failed", payload={"approval": snapshot})
+    return approval
