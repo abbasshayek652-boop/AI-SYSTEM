@@ -87,18 +87,27 @@ class LinkedInService:
         return storage.list_scheduled()
 
     def publish_due(self, now: float | None = None) -> List[int]:
-        published: List[int] = []
+        """Do not publish automatically; convert due posts into approval requests."""
+        from services.approvals import request_approval
+
+        requested: List[int] = []
         for post_id, request in storage.due_posts(now):
             try:
-                if request.doc_path:
-                    self.post_document(request)
-                else:
-                    self.post_text(request.text, request.visibility)
-                storage.mark_done(post_id, "completed")
-                published.append(post_id)
+                approval = request_approval(
+                    capability="content.publish",
+                    target="linkedin",
+                    requested_by="linkedin_scheduler",
+                    payload={
+                        **request.model_dump(mode="json"),
+                        "scheduled_id": post_id,
+                    },
+                    reason="Scheduled LinkedIn post reached its execution time",
+                )
+                storage.mark_done(post_id, f"approval_requested:{approval.id}")
+                requested.append(post_id)
             except Exception as exc:  # noqa: BLE001
-                storage.mark_done(post_id, f"failed:{exc}")
-        return published
+                storage.mark_done(post_id, f"approval_failed:{exc}")
+        return requested
 
     def health(self) -> Dict[str, Any]:
         bundle = storage.get_tokens()
