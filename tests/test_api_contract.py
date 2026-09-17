@@ -13,6 +13,7 @@ def test_control_plane_routes_exist() -> None:
     assert "/readyz" in paths and "get" in paths["/readyz"]
     assert "/status" in paths and "get" in paths["/status"]
     assert "/integrations/health" in paths and "get" in paths["/integrations/health"]
+    assert "/integrations/binance/balances" in paths and "get" in paths["/integrations/binance/balances"]
     assert "/approvals" in paths and "get" in paths["/approvals"]
     assert "/policy" in paths and "get" in paths["/policy"]
 
