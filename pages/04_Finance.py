@@ -6,7 +6,7 @@ from ui.cockpit import get, require_auth
 st.set_page_config(page_title="Mother AI · Finance", page_icon="💰", layout="wide")
 token = require_auth(st)
 st.title("💰 Finance")
-st.caption("Unified finance view. Real balances appear only when a supported account adapter is configured.")
+st.caption("Unified finance view. Account data is read-only; consequential financial actions remain disabled.")
 
 try:
     connections = get("/observability/connections", token)
@@ -21,6 +21,20 @@ if binance:
     a.metric("Binance", binance.get("status", "UNKNOWN"))
     b.metric("Authenticated", "YES" if binance.get("authenticated") else "NO")
     c.metric("Mode", "READ ONLY")
+
+if binance and binance.get("authenticated"):
+    if st.button("Refresh Binance balances"):
+        try:
+            snapshot = get("/integrations/binance/balances", token)
+            balances = snapshot.get("balances", [])
+            if balances:
+                st.dataframe(balances, use_container_width=True, hide_index=True)
+            else:
+                st.info("No non-zero balances returned.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(str(exc))
+else:
+    st.info("Configure the Binance read-only adapter to view balances.")
 
 st.subheader("Recent crypto-agent activity")
 for event in events.get("events", []):
