@@ -16,6 +16,11 @@ def get(key: str) -> ConnectionAdapter | None:
     return _ADAPTERS.get(key)
 
 
+def get_adapter(key: str) -> ConnectionAdapter | None:
+    """Backward-compatible alias for callers using the pre-refactor API."""
+    return get(key)
+
+
 def all_adapters() -> list[ConnectionAdapter]:
     return list(_ADAPTERS.values())
 
