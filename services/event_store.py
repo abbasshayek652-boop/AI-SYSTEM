@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from db.models import AgentEvent
+from db.models import AgentEvent, utc_now
 from db.session import engine
 
 
@@ -16,7 +16,7 @@ def record_event(
     payload: dict[str, Any] | None = None,
 ) -> AgentEvent:
     event = AgentEvent(
-        ts=dt.datetime.utcnow(),
+        ts=utc_now(),
         agent_key=agent_key,
         event_type=event_type,
         payload=payload or {},

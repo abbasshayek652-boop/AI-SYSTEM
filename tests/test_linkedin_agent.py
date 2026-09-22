@@ -79,19 +79,14 @@ def test_post_text_builds_payload(monkeypatch: pytest.MonkeyPatch):
     assert result["id"] == "123"
 
 
-def test_scheduler_publishes_due(monkeypatch: pytest.MonkeyPatch):
-    storage.save_tokens(TokenBundle(access_token="token", expires_at=time.time() + 3600))
-    monkeypatch.setattr(oauth, "get_userinfo", lambda token: {"sub": "urn:li:person:owner"})
-    published: list[str] = []
-
-    def fake_post(url: str, json: Dict[str, Any], headers: Dict[str, str]):
-        published.append(json["commentary"])
-        return _response(200, {"ok": True})
-
-    monkeypatch.setattr(requests, "post", fake_post)
+def test_scheduler_requests_approval_for_due_post():
     run_time = dt.datetime.utcnow()
     req = ScheduleRequest(text="Scheduled", run_at=run_time)
     service.schedule_post(req)
+
     published_ids = service.publish_due(run_time.timestamp() + 1)
+
     assert published_ids
-    assert published == ["Scheduled"]
+    # Scheduled publishing is deliberately approval-gated: the scheduler must
+    # create an approval request rather than call LinkedIn automatically.
+    assert storage.list_scheduled() == []

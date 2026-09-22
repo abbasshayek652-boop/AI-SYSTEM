@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from db.models import Approval
+from db.models import Approval, utc_now
 from db.session import engine
 from policy.engine import CapabilityLevel, policy_engine
 from services.event_store import record_event
@@ -50,7 +50,7 @@ def decide(approval_id: int, *, approved: bool, decided_by: str, note: str | Non
         approval.status = "approved" if approved else "rejected"
         approval.decided_by = decided_by
         approval.decision_note = note
-        approval.updated_ts = dt.datetime.utcnow()
+        approval.updated_ts = utc_now()
         session.add(approval)
         session.commit()
         session.refresh(approval)
@@ -68,7 +68,7 @@ def claim_approval(approval_id: int, *, claimed_by: str) -> Approval:
         if approval is None:
             raise LookupError("Approval not found or not approved")
         approval.status = "executing"
-        approval.updated_ts = dt.datetime.utcnow()
+        approval.updated_ts = utc_now()
         approval.decided_by = claimed_by
         session.add(approval)
         session.commit()
@@ -87,7 +87,7 @@ def finish_approval(approval_id: int, *, success: bool, decided_by: str, note: s
         if approval.status != "executing":
             raise ValueError("Approval is not executing")
         approval.status = "executed" if success else "approved"
-        approval.updated_ts = dt.datetime.utcnow()
+        approval.updated_ts = utc_now()
         if note:
             approval.decision_note = note
         session.add(approval)
