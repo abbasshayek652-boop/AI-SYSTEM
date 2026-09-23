@@ -6,7 +6,6 @@ import os
 import httpx
 import streamlit as st
 
-st.set_page_config(page_title="Mother AI · Approvals", page_icon="✅", layout="wide")
 
 if not st.session_state.get("authenticated"):
     st.warning("Sign in from the Mother AI home page first.")

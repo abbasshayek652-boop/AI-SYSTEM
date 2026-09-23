@@ -1,6 +1,5 @@
 import streamlit as st
 from ui.cockpit import get, require_auth
-st.set_page_config(page_title="Mother AI · Connections", page_icon="🔌", layout="wide")
 token=require_auth(st); st.title("🔌 Connections"); st.caption("Configuration and live integration health; secrets are never displayed.")
 try: config=get("/observability/connections",token); health=get("/integrations/health",token)
 except Exception as exc: st.error(str(exc)); st.stop()

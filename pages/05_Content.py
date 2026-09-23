@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 from ui.cockpit import get, require_auth
 
-st.set_page_config(page_title="Mother AI · Content", page_icon="📣", layout="wide")
 token = require_auth(st)
 st.title("📣 Content")
 st.caption("Content drafts and publishing approvals. Publishing remains explicitly gated.")

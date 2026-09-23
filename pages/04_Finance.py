@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 from ui.cockpit import get, require_auth
 
-st.set_page_config(page_title="Mother AI · Finance", page_icon="💰", layout="wide")
 token = require_auth(st)
 st.title("💰 Finance")
 st.caption("Unified finance view. Account data is read-only; consequential financial actions remain disabled.")
