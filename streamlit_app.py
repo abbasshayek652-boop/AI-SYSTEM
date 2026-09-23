@@ -2,7 +2,7 @@
 
 The UI owns presentation only. FastAPI remains the single control-plane API.
 The entrypoint owns authentication and explicit Streamlit navigation so the
-automatic `pages/` discovery mechanism cannot conflict with the cockpit.
+automatic `cockpit_pages/` discovery mechanism cannot conflict with the cockpit.
 """
 from __future__ import annotations
 
@@ -473,28 +473,28 @@ def home_page() -> None:
 
 
 def run_navigation() -> None:
-    """Use explicit navigation; do not let Streamlit auto-discover pages/."""
+    """Use explicit navigation; do not let Streamlit auto-discover cockpit_pages/."""
     navigation = {
         "Control": [
             st.Page(home_page, title="Overview", icon="🏠", default=True),
             st.Page(
-                "pages/01_Connections.py",
+                "cockpit_pages/01_Connections.py",
                 title="Connections",
                 icon="🔌",
             ),
-            st.Page("pages/02_Activity.py", title="Activity", icon="🧾"),
-            st.Page("pages/03_Approvals.py", title="Approvals", icon="✅"),
+            st.Page("cockpit_pages/02_Activity.py", title="Activity", icon="🧾"),
+            st.Page("cockpit_pages/03_Approvals.py", title="Approvals", icon="✅"),
         ],
         "Operations": [
-            st.Page("pages/04_Finance.py", title="Finance", icon="💰"),
-            st.Page("pages/05_Content.py", title="Content", icon="📣"),
-            st.Page("pages/06_Intelligence.py", title="Intelligence", icon="📰"),
-            st.Page("pages/07_Business.py", title="Business", icon="💼"),
+            st.Page("cockpit_pages/04_Finance.py", title="Finance", icon="💰"),
+            st.Page("cockpit_pages/05_Content.py", title="Content", icon="📣"),
+            st.Page("cockpit_pages/06_Intelligence.py", title="Intelligence", icon="📰"),
+            st.Page("cockpit_pages/07_Business.py", title="Business", icon="💼"),
         ],
         "Engineering": [
-            st.Page("pages/08_Development.py", title="Development", icon="💻"),
-            st.Page("pages/09_Alerts.py", title="Alerts", icon="🚨"),
-            st.Page("pages/10_System.py", title="System", icon="⚙️"),
+            st.Page("cockpit_pages/08_Development.py", title="Development", icon="💻"),
+            st.Page("cockpit_pages/09_Alerts.py", title="Alerts", icon="🚨"),
+            st.Page("cockpit_pages/10_System.py", title="System", icon="⚙️"),
         ],
     }
     page = st.navigation(navigation, position="sidebar")
