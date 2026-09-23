@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 from ui.cockpit import get, require_auth
 
-st.set_page_config(page_title="Mother AI · Intelligence", page_icon="📰", layout="wide")
 token = require_auth(st)
 st.title("📰 Intelligence")
 st.caption("A read-only operational view for intelligence agents and their event stream.")
