@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 from ui.cockpit import get, require_auth
 
-st.set_page_config(page_title="Mother AI · Development", page_icon="💻", layout="wide")
 token = require_auth(st)
 st.title("💻 Development")
 st.caption("Development automation status, with GitHub represented as a safe connection rather than an uncontrolled code executor.")
