@@ -79,22 +79,18 @@ The Streamlit console starts the private gateway on `MOTHER_BACKEND_PORT` (defau
 - `GET /agents/{agent_key}` — one runtime agent.
 - `POST /start` / `POST /stop` — authenticated lifecycle control.
 
-## Google Cloud target
+## Deployment model
 
-- Cloud Run: stateless gateway/API/console services.
-- GKE: only persistent or specialized long-running agents.
-- Cloud SQL PostgreSQL: production durable state.
-- Pub/Sub: production event bus.
-- Vertex AI: managed model training/evaluation/inference where appropriate.
-- Secret Manager: credentials and API secrets.
-- Artifact Registry: immutable images.
-- Cloud Storage: reports, models, backups, and artifacts.
-- Cloud Monitoring/Logging: observability.
-- IAM: least privilege.
-- Cloud Build/GitHub Actions: CI/CD.
+The supported operator deployment is intentionally simple:
 
-See `docs/AGENT_CATALOG_V1.md` and `docs/ARCHITECTURE_V2.md` for the detailed design.
+- **FastAPI** runs the Mother AI control plane.
+- **Streamlit** runs the operator console.
+- **SQLite** is suitable for a single-user/local deployment; use PostgreSQL only when a multi-process production deployment requires it.
+- **systemd** can supervise the FastAPI and Streamlit processes on Linux.
+- **Nginx or another reverse proxy** may sit in front of Streamlit/FastAPI when HTTPS and a public hostname are required.
+- External integrations remain disabled until their credentials are deliberately configured.
+- Binance is read-only by design in the current phase.
+- LinkedIn publishing remains approval-gated.
 
-## Security
+For a Linux host, see `docs/LINUX_DEPLOYMENT.md`.
 
-Never commit `.env`, exchange keys, OAuth secrets, JWT secrets, or webhook credentials. Use environment variables locally and Secret Manager in production.
